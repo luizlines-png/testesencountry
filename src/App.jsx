@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Store, Wallet, ClipboardList, Plus, Trash2, ArrowLeft, AlertCircle,
   Ticket, Package, PackageX, ShoppingCart, Minus, X, RefreshCw,
-  ChevronDown, ChevronUp, LogIn, LogOut, Menu
+  ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp
 } from "lucide-react";
 import { bancoCentralConfigurado, obterPerfil, storageGet, storageSet, supabase } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
@@ -869,6 +869,51 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
     ...porBarraca.flatMap((barraca) => (vendasBarracas[barraca.id] || []).map((venda) => ({ ...venda, origemNome: barraca.nome }))),
   ].sort((a, b) => b.hora - a.hora).slice(0, 6);
 
+  const vendasComOrigem = [
+    ...caixa.map((venda) => ({ ...venda, canal: "caixa" })),
+    ...porBarraca.flatMap((barraca) =>
+      (vendasBarracas[barraca.id] || []).map((venda) => ({
+        ...venda,
+        canal: "barraca",
+        barracaNome: barraca.nome,
+      }))
+    ),
+  ];
+  const quantidadeDaVenda = (venda) =>
+    venda.itens?.reduce((soma, item) => soma + (Number(item.quantidade) || 0), 0) || 1;
+  const horasComVenda = vendasComOrigem.map((venda) => new Date(venda.hora).getHours());
+  const horaInicial = horasComVenda.length ? Math.min(...horasComVenda) : 16;
+  const horaFinal = horasComVenda.length ? Math.max(...horasComVenda) : 23;
+  const horas = Array.from({ length: horaFinal - horaInicial + 1 }, (_, indice) => horaInicial + indice);
+  const movimentoPorHora = horas.map((hora) => {
+    const vendasDaHora = vendasComOrigem.filter((venda) => new Date(venda.hora).getHours() === hora);
+    return {
+      hora,
+      caixa: vendasDaHora.filter((venda) => venda.canal === "caixa").reduce((soma, venda) => soma + quantidadeDaVenda(venda), 0),
+      barracas: vendasDaHora.filter((venda) => venda.canal === "barraca").reduce((soma, venda) => soma + quantidadeDaVenda(venda), 0),
+    };
+  });
+  const maiorMovimento = Math.max(...movimentoPorHora.map((item) => item.caixa + item.barracas), 1);
+  const pico = movimentoPorHora.reduce(
+    (maior, atual) => atual.caixa + atual.barracas > maior.caixa + maior.barracas ? atual : maior,
+    movimentoPorHora[0]
+  );
+  const produtosNoPico = pico
+    ? Object.values(
+      porBarraca.flatMap((barraca) =>
+        (vendasBarracas[barraca.id] || [])
+          .filter((venda) => new Date(venda.hora).getHours() === pico.hora && venda.item)
+          .map((venda) => ({ nome: venda.item, barraca: barraca.nome, quantidade: quantidadeDaVenda(venda) }))
+      ).reduce((acumulado, produto) => {
+        const chave = `${produto.barraca}-${produto.nome}`;
+        acumulado[chave] = acumulado[chave]
+          ? { ...acumulado[chave], quantidade: acumulado[chave].quantidade + produto.quantidade }
+          : produto;
+        return acumulado;
+      }, {})
+    ).sort((a, b) => b.quantidade - a.quantidade).slice(0, 5)
+    : [];
+
   return (
     <div className="tela">
       <TopBar title="Dashboard" subtitle="Visão geral das vendas" onBack={onBack} icon={<ClipboardList size={20} />} />
@@ -885,6 +930,38 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
         <div className="metric-card metric-green"><div className="metric-heading"><span>Vendido nas barracas</span><i><Store size={18} /></i></div><strong>{formatMoney(totalBarracas)}</strong><small>{porBarraca.reduce((s, b) => s + b.quantidade, 0)} registros</small></div>
         <div className="metric-card metric-gold"><div className="metric-heading"><span>Vendas registradas</span><i><ClipboardList size={18} /></i></div><strong>{totalVendas}</strong><small>Caixa e barracas</small></div>
       </div>
+      <section className="dashboard-panel peak-panel">
+        <div className="panel-heading peak-heading">
+          <div><h3>Horários de maior movimento</h3><p>Quantidade de produtos vendidos por hora no caixa e nas barracas</p></div>
+          {vendasComOrigem.length > 0 && <div className="peak-badge"><TrendingUp size={15} /><span>Pico: {String(pico.hora).padStart(2, "0")}h–{String((pico.hora + 1) % 24).padStart(2, "0")}h</span><strong>{pico.caixa + pico.barracas} itens</strong></div>}
+        </div>
+        {vendasComOrigem.length === 0 ? <div className="hist-empty">Os horários de pico aparecerão após as primeiras vendas.</div> : (
+          <>
+            <div className="peak-legend" aria-hidden="true"><span><i className="legend-stall" /> Barracas</span><span><i className="legend-cash" /> Caixa</span></div>
+            <div className="hourly-chart" role="img" aria-label={`Gráfico de vendas por hora. Maior movimento entre ${pico.hora} e ${(pico.hora + 1) % 24} horas.`}>
+              {movimentoPorHora.map((item) => {
+                const totalHora = item.caixa + item.barracas;
+                return <div className={`hour-column ${item.hora === pico.hora ? "is-peak" : ""}`} key={item.hora}>
+                  <span className="hour-total">{totalHora || ""}</span>
+                  <div className="hour-stack" title={`${String(item.hora).padStart(2, "0")}h: ${item.barracas} nas barracas e ${item.caixa} no caixa`}>
+                    <i className="hour-bar hour-bar-stall" style={{ height: `${(item.barracas / maiorMovimento) * 100}%` }} />
+                    <i className="hour-bar hour-bar-cash" style={{ height: `${(item.caixa / maiorMovimento) * 100}%` }} />
+                  </div>
+                  <span className="hour-label">{String(item.hora).padStart(2, "0")}h</span>
+                </div>;
+              })}
+            </div>
+            <div className="peak-products">
+              <div className="peak-products-title"><Clock size={17} /><div><strong>Mais vendidos nas barracas durante o pico</strong><span>{String(pico.hora).padStart(2, "0")}h às {String((pico.hora + 1) % 24).padStart(2, "0")}h</span></div></div>
+              {produtosNoPico.length === 0 ? <span className="peak-products-empty">Nenhum produto identificado nas vendas das barracas nesse horário.</span> : (
+                <div className="peak-product-list">{produtosNoPico.map((produto, indice) => <div className="peak-product" key={`${produto.barraca}-${produto.nome}`}>
+                  <b>{indice + 1}</b><div><strong>{produto.nome}</strong><span>{produto.barraca}</span></div><em>{produto.quantidade} un.</em>
+                </div>)}</div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
       <div className="dashboard-columns">
         <section className="dashboard-panel">
           <div className="panel-heading"><div><h3>Desempenho por barraca</h3><p>{loading ? "Carregando dados…" : "Total de vendas registradas"}</p></div></div>
