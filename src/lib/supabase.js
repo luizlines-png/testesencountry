@@ -23,6 +23,25 @@ export async function obterPerfil(userId) {
   return data;
 }
 
+async function mensagemErroFuncao(error) {
+  try {
+    const resposta = await error?.context?.json();
+    return resposta?.error || resposta?.message || error.message;
+  } catch {
+    return error?.message || "Não foi possível concluir a operação.";
+  }
+}
+
+export async function gerenciarUsuarios(acao, dados = {}) {
+  if (!supabase) throw new Error("O Supabase não está configurado.");
+  const { data, error } = await supabase.functions.invoke("gerenciar-usuarios", {
+    body: { acao, ...dados },
+  });
+  if (error) throw new Error(await mensagemErroFuncao(error));
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 const K_BARRACAS = "festa-barracas";
 const K_CAIXA = "festa-caixa-transacoes";
 const vendasKey = (id) => `festa-vendas-${id}`;

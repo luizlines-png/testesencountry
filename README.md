@@ -41,22 +41,21 @@ values ('UUID-DO-USUARIO', 'Administrador', 'admin');
 
 Depois disso, faça login no Encountry com o e-mail e a senha criados.
 
-Para outros operadores, crie primeiro a conta em **Authentication > Users** e
-depois cadastre o perfil correspondente:
+### 4. Publicar o gerenciamento de acessos
 
-```sql
--- Operador de caixa
-insert into public.perfis (id, nome, papel)
-values ('UUID-DO-USUARIO', 'Nome do operador', 'caixa');
+A tela administrativa cria, edita e remove contas reais do Supabase Auth por
+meio da Edge Function `gerenciar-usuarios`. Publique a função antes de usar o
+módulo **Acessos**:
 
--- Operador de barraca (a barraca precisa existir)
-insert into public.perfis (id, nome, papel, barraca_id)
-values ('UUID-DO-USUARIO', 'Nome do operador', 'barraca', 'ID-DA-BARRACA');
+```bash
+supabase functions deploy gerenciar-usuarios
 ```
 
-> A tela de controle de acessos ainda gerencia apenas as contas do modo local.
-> Com o Supabase ativo, usuários e perfis devem ser criados pelo painel/SQL do
-> Supabase conforme explicado acima.
+Ela também pode ser criada no painel do Supabase copiando o conteúdo de
+`supabase/functions/gerenciar-usuarios/index.ts`. A função recebe a sessão do
+usuário logado e confirma no banco que ele possui o papel `admin` antes de usar
+as operações administrativas do Auth. Nenhuma chave administrativa é enviada
+ao navegador ou à Vercel.
 
 ## Desenvolvimento
 

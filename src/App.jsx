@@ -4,7 +4,7 @@ import {
   Ticket, Package, PackageX, ShoppingCart, Minus, X, RefreshCw,
   ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp
 } from "lucide-react";
-import { bancoCentralConfigurado, obterPerfil, storageGet, storageSet, supabase } from "./lib/supabase";
+import { bancoCentralConfigurado, gerenciarUsuarios, obterPerfil, storageGet, storageSet, supabase } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
 import "./App.css";
 
@@ -990,24 +990,68 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
 
 function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
   const vazio = { id: null, nome: "", usuario: "", senha: "", papel: "caixa", barraca_id: "" };
-  const [usuarios, setUsuarios] = useState(() => listarUsuarios());
+  const [usuarios, setUsuarios] = useState(() => supabase ? [] : listarUsuarios());
   const [form, setForm] = useState(vazio);
   const [erro, setErro] = useState("");
   const [nomeBarraca, setNomeBarraca] = useState("");
-  const recarregar = () => setUsuarios(listarUsuarios());
+  const [carregando, setCarregando] = useState(Boolean(supabase));
+  const [salvando, setSalvando] = useState(false);
 
-  function submit(event) {
+  const recarregar = useCallback(async () => {
+    if (!supabase) {
+      setUsuarios(listarUsuarios());
+      return;
+    }
+    setCarregando(true);
+    try {
+      const resultado = await gerenciarUsuarios("listar");
+      setUsuarios(resultado.usuarios || []);
+      setErro("");
+    } catch (error) {
+      setErro(error.message);
+    } finally {
+      setCarregando(false);
+    }
+  }, []);
+
+  useEffect(() => { recarregar(); }, [recarregar]);
+
+  async function submit(event) {
     event.preventDefault();
-    const resultado = salvarUsuario(form);
-    if (resultado.error) { setErro(resultado.error); return; }
-    setForm(vazio); setErro(""); recarregar();
+    setSalvando(true);
+    setErro("");
+    try {
+      if (supabase) {
+        await gerenciarUsuarios(form.id ? "atualizar" : "criar", { usuario: form });
+      } else {
+        const resultado = salvarUsuario(form);
+        if (resultado.error) throw new Error(resultado.error);
+      }
+      setForm(vazio);
+      await recarregar();
+    } catch (error) {
+      setErro(error.message);
+    } finally {
+      setSalvando(false);
+    }
   }
   function editar(usuario) {
     setForm({ ...usuario, senha: "" }); setErro("");
   }
-  function excluir(id) {
+  async function excluir(id) {
     if (id === usuarioAtualId) { setErro("Não é possível remover o usuário que está logado."); return; }
-    removerUsuario(id); recarregar();
+    if (!window.confirm("Remover este usuário e impedir seu acesso?")) return;
+    setSalvando(true);
+    setErro("");
+    try {
+      if (supabase) await gerenciarUsuarios("excluir", { id });
+      else removerUsuario(id);
+      await recarregar();
+    } catch (error) {
+      setErro(error.message);
+    } finally {
+      setSalvando(false);
+    }
   }
   async function criarBarraca(event) {
     event.preventDefault();
@@ -1033,12 +1077,14 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
         <section className="dashboard-panel access-users">
           <div className="panel-heading"><div><h3>Usuários cadastrados</h3><p>Defina quem pode operar cada área.</p></div></div>
           <div className="user-list">
+            {carregando && <span className="hist-empty">Carregando usuários…</span>}
+            {!carregando && usuarios.length === 0 && <span className="hist-empty">Nenhum usuário cadastrado.</span>}
             {usuarios.map((usuario) => <div className="user-row" key={usuario.id}>
               <div className="user-avatar">{usuario.nome.slice(0, 1).toUpperCase()}</div>
-              <div className="user-info"><strong>{usuario.nome}</strong><span>@{usuario.usuario}</span></div>
+              <div className="user-info"><strong>{usuario.nome}</strong><span>{supabase ? usuario.usuario : `@${usuario.usuario}`}</span></div>
               <span className={`role-badge role-${usuario.papel}`}>{nomePerfil(usuario.papel)}</span>
-              <button className="btn-secondary user-edit" onClick={() => editar(usuario)}>Editar</button>
-              <button className="hist-del" onClick={() => excluir(usuario.id)} title="Remover usuário"><Trash2 size={15} /></button>
+              <button className="btn-secondary user-edit" disabled={salvando} onClick={() => editar(usuario)}>Editar</button>
+              <button className="hist-del" disabled={salvando} onClick={() => excluir(usuario.id)} title="Remover usuário"><Trash2 size={15} /></button>
             </div>)}
           </div>
           <div className="access-stalls">
@@ -1057,13 +1103,13 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
           <div className="panel-heading"><div><h3>{form.id ? "Editar usuário" : "Novo usuário"}</h3><p>{form.id ? "Deixe a senha vazia para mantê-la." : "Crie um acesso para a equipe."}</p></div></div>
           <form className="form-stack" onSubmit={submit}>
             <label className="field-label">Nome</label><input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Nome da pessoa" />
-            <label className="field-label">Usuário</label><input value={form.usuario} onChange={(e) => setForm({ ...form, usuario: e.target.value })} placeholder="Ex: joao" />
+            <label className="field-label">{supabase ? "E-mail" : "Usuário"}</label><input type={supabase ? "email" : "text"} value={form.usuario} onChange={(e) => setForm({ ...form, usuario: e.target.value })} placeholder={supabase ? "pessoa@email.com" : "Ex: joao"} required />
             <label className="field-label">{form.id ? "Nova senha (opcional)" : "Senha"}</label><input type="password" value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
             <label className="field-label">Perfil de acesso</label><select value={form.papel} onChange={(e) => setForm({ ...form, papel: e.target.value, barraca_id: "" })}><option value="admin">Administrador</option><option value="caixa">Caixa</option><option value="barraca">Barraca</option></select>
-            {form.papel === "barraca" && <><label className="field-label">Barraca vinculada</label><select value={form.barraca_id} onChange={(e) => setForm({ ...form, barraca_id: e.target.value })}><option value="">Selecionar depois</option>{barracas.map((barraca) => <option key={barraca.id} value={barraca.id}>{barraca.nome}</option>)}</select></>}
+            {form.papel === "barraca" && <><label className="field-label">Barraca vinculada</label><select required value={form.barraca_id} onChange={(e) => setForm({ ...form, barraca_id: e.target.value })}><option value="">Selecione uma barraca</option>{barracas.map((barraca) => <option key={barraca.id} value={barraca.id}>{barraca.nome}</option>)}</select></>}
             {erro && <div className="err-msg"><AlertCircle size={14} /> {erro}</div>}
-            <button className="btn-primary" type="submit"><Plus size={16} /> {form.id ? "Salvar alterações" : "Criar acesso"}</button>
-            {form.id && <button className="btn-secondary" type="button" onClick={() => { setForm(vazio); setErro(""); }}>Cancelar edição</button>}
+            <button className="btn-primary" disabled={salvando} type="submit"><Plus size={16} /> {salvando ? "Salvando…" : form.id ? "Salvar alterações" : "Criar acesso"}</button>
+            {form.id && <button className="btn-secondary" disabled={salvando} type="button" onClick={() => { setForm(vazio); setErro(""); }}>Cancelar edição</button>}
           </form>
         </section>
       </div>

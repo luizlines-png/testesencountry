@@ -59,7 +59,13 @@ export function sairLocal() {
 }
 
 export function listarUsuarios() {
-  return obterUsuarios().map(({ senha, ...usuario }) => usuario);
+  return obterUsuarios().map((usuario) => ({
+    id: usuario.id,
+    nome: usuario.nome,
+    usuario: usuario.usuario,
+    papel: usuario.papel,
+    barraca_id: usuario.barraca_id || null,
+  }));
 }
 
 export function salvarUsuario(dados) {
