@@ -1,16 +1,73 @@
-# React + Vite
+# Encountry
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Aplicação de operação da festa Encountry, com controle de caixa, barracas,
+estoque, vendas e perfis de acesso.
 
-Currently, two official plugins are available:
+## Banco de dados Supabase
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+O projeto usa Supabase quando as duas variáveis de ambiente estão configuradas.
+Sem elas, mantém o modo local no navegador para facilitar o desenvolvimento.
 
-## React Compiler
+### 1. Criar e preparar o projeto
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Crie um projeto em [supabase.com](https://supabase.com).
+2. Abra **SQL Editor** no painel do projeto.
+3. Execute todo o arquivo [`supabase/schema.sql`](supabase/schema.sql).
+4. Em **Project Settings > API**, copie a URL do projeto e a chave pública
+   (`anon`/`publishable`).
 
-## Expanding the Oxlint configuration
+### 2. Configurar o Encountry
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Copie `.env.example` para `.env` e preencha:
+
+```env
+VITE_SUPABASE_URL=https://seu-projeto.supabase.co
+VITE_SUPABASE_ANON_KEY=sua-chave-publica
+```
+
+Nunca coloque a `service_role` no `.env` deste front-end. Ela ignora as regras de
+segurança do banco e deve existir somente em um servidor confiável.
+
+### 3. Criar o primeiro administrador
+
+1. No Supabase, abra **Authentication > Users** e crie o usuário.
+2. Copie o UUID desse usuário.
+3. No **SQL Editor**, execute:
+
+```sql
+insert into public.perfis (id, nome, papel)
+values ('UUID-DO-USUARIO', 'Administrador', 'admin');
+```
+
+Depois disso, faça login no Encountry com o e-mail e a senha criados.
+
+Para outros operadores, crie primeiro a conta em **Authentication > Users** e
+depois cadastre o perfil correspondente:
+
+```sql
+-- Operador de caixa
+insert into public.perfis (id, nome, papel)
+values ('UUID-DO-USUARIO', 'Nome do operador', 'caixa');
+
+-- Operador de barraca (a barraca precisa existir)
+insert into public.perfis (id, nome, papel, barraca_id)
+values ('UUID-DO-USUARIO', 'Nome do operador', 'barraca', 'ID-DA-BARRACA');
+```
+
+> A tela de controle de acessos ainda gerencia apenas as contas do modo local.
+> Com o Supabase ativo, usuários e perfis devem ser criados pelo painel/SQL do
+> Supabase conforme explicado acima.
+
+## Desenvolvimento
+
+```bash
+npm install
+npm run dev
+```
+
+Validações:
+
+```bash
+npm run lint
+npm run build
+```

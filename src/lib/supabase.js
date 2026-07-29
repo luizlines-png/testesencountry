@@ -3,6 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+if (Boolean(url) !== Boolean(anonKey)) {
+  throw new Error(
+    "Configuração incompleta do Supabase: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY."
+  );
+}
+
 export const supabase = url && anonKey ? createClient(url, anonKey) : null;
 export const bancoCentralConfigurado = Boolean(supabase);
 
