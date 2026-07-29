@@ -1178,6 +1178,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [perfil, setPerfil] = useState(null);
   const [carregandoAcesso, setCarregandoAcesso] = useState(bancoCentralConfigurado);
+  const [erroAcesso, setErroAcesso] = useState("");
 
   const abrirModuloInicial = (perfilAtual) => {
     if (perfilAtual.papel === "admin") { setScreen("dashboard"); return; }
@@ -1196,18 +1197,36 @@ export default function App() {
       return undefined;
     }
     let ativo = true;
-    async function carregarSessao() {
-      const { data: { session: sessao } } = await supabase.auth.getSession();
-      if (ativo) {
-        setSession(sessao);
-        setPerfil(await obterPerfil(sessao?.user?.id));
+    let versao = 0;
+
+    async function aplicarSessao(sessao) {
+      const versaoAtual = ++versao;
+      if (!ativo) return;
+      setSession(sessao);
+      setPerfil(null);
+      setErroAcesso("");
+      if (!sessao) {
         setCarregandoAcesso(false);
+        return;
+      }
+      setCarregandoAcesso(true);
+      try {
+        const perfilAtual = await obterPerfil(sessao.user.id);
+        if (ativo && versaoAtual === versao) setPerfil(perfilAtual);
+      } catch (error) {
+        console.error("Não foi possível carregar o perfil de acesso.", error);
+        if (ativo && versaoAtual === versao) {
+          setErroAcesso("Não foi possível consultar sua permissão. Tente sair e entrar novamente.");
+        }
+      } finally {
+        if (ativo && versaoAtual === versao) setCarregandoAcesso(false);
       }
     }
-    carregarSessao();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_evento, sessao) => {
-      setSession(sessao);
-      setPerfil(await obterPerfil(sessao?.user?.id));
+
+    supabase.auth.getSession().then(({ data: { session: sessao } }) => aplicarSessao(sessao));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_evento, sessao) => {
+      // Consultas assíncronas dentro deste callback podem bloquear o cliente do Supabase.
+      setTimeout(() => aplicarSessao(sessao), 0);
     });
     return () => { ativo = false; subscription.unsubscribe(); };
   }, []);
@@ -1234,7 +1253,7 @@ export default function App() {
   if (bancoCentralConfigurado && !perfil) {
     return (
       <div className="app-root"><div className="tela acesso-tela">
-        <div className="hist-empty">Seu usuário ainda não recebeu uma permissão de acesso.</div>
+        <div className="hist-empty">{erroAcesso || "Seu usuário ainda não recebeu uma permissão de acesso."}</div>
         <button className="btn-secondary" onClick={() => supabase.auth.signOut()}><LogOut size={16} /> Sair</button>
       </div></div>
     );

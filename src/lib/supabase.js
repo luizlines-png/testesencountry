@@ -18,8 +18,8 @@ export async function obterPerfil(userId) {
     .from("perfis")
     .select("id, nome, papel, barraca_id")
     .eq("id", userId)
-    .single();
-  if (error) return null;
+    .maybeSingle();
+  if (error) throw error;
   return data;
 }
 
