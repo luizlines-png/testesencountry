@@ -134,11 +134,12 @@ Deno.serve(async (req) => {
       if (dados.senha) atributos.password = dados.senha;
       const { error: atualizarAuthError } = await admin.auth.admin.updateUserById(entrada.id, atributos);
       if (atualizarAuthError) throw atualizarAuthError;
-      const { error: atualizarPerfilError } = await admin.from("perfis").update({
+      const { error: atualizarPerfilError } = await admin.from("perfis").upsert({
+        id: entrada.id,
         nome: dados.nome,
         papel: dados.papel,
         barraca_id: dados.barracaId,
-      }).eq("id", entrada.id);
+      });
       if (atualizarPerfilError) throw atualizarPerfilError;
       return resposta({ ok: true });
     }
