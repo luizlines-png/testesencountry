@@ -60,15 +60,20 @@ Deno.serve(async (req) => {
     });
     const { data: perfilAdmin, error: perfilError } = await admin
       .from("perfis")
-      .select("papel")
+      .select("id, nome, papel, barraca_id")
       .eq("id", authData.user.id)
-      .single();
+      .maybeSingle();
+    const body = await req.json();
+    const acao = body?.acao;
+
+    if (acao === "meu-perfil") {
+      if (perfilError) throw perfilError;
+      return resposta({ perfil: perfilAdmin || null });
+    }
+
     if (perfilError || perfilAdmin?.papel !== "admin") {
       return resposta({ error: "Somente administradores podem gerenciar acessos." }, 403);
     }
-
-    const body = await req.json();
-    const acao = body?.acao;
 
     if (acao === "listar") {
       const { data: authUsuarios, error: listaError } = await admin.auth.admin.listUsers({
@@ -94,7 +99,11 @@ Deno.serve(async (req) => {
         email: dados.email,
         password: dados.senha,
         email_confirm: true,
-        user_metadata: { nome: dados.nome },
+        user_metadata: {
+          nome: dados.nome,
+          papel: dados.papel,
+          barraca_id: dados.barracaId,
+        },
       });
       if (criarError || !criado.user) throw criarError || new Error("Não foi possível criar a conta.");
       const { error: perfilNovoError } = await admin.from("perfis").insert({
@@ -114,9 +123,13 @@ Deno.serve(async (req) => {
       const entrada = body.usuario || {};
       if (!entrada.id) throw new Error("Usuário não identificado.");
       const dados = validarUsuario(entrada, false);
-      const atributos: { email: string; password?: string; user_metadata: { nome: string } } = {
+      const atributos: { email: string; password?: string; user_metadata: Record<string, unknown> } = {
         email: dados.email,
-        user_metadata: { nome: dados.nome },
+        user_metadata: {
+          nome: dados.nome,
+          papel: dados.papel,
+          barraca_id: dados.barracaId,
+        },
       };
       if (dados.senha) atributos.password = dados.senha;
       const { error: atualizarAuthError } = await admin.auth.admin.updateUserById(entrada.id, atributos);

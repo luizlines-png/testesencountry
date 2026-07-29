@@ -20,7 +20,12 @@ export async function obterPerfil(userId) {
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;
-  return data;
+  if (data) return data;
+
+  // Se uma política RLS estiver desatualizada, a função autenticada ainda
+  // consegue devolver exclusivamente o perfil do próprio usuário.
+  const resultado = await gerenciarUsuarios("meu-perfil");
+  return resultado.perfil || null;
 }
 
 async function mensagemErroFuncao(error) {
