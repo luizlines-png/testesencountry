@@ -65,6 +65,9 @@ function paraVenda(row) {
     origem: row.origem,
     tipo: row.tipo,
     itens: row.itens || undefined,
+    barraca_id: row.barraca_id || null,
+    created_by: row.created_by || null,
+    created_at: row.created_at || null,
   };
 }
 

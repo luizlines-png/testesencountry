@@ -2,10 +2,11 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Store, Wallet, ClipboardList, Plus, Trash2, ArrowLeft, AlertCircle,
   Ticket, Package, PackageX, ShoppingCart, Minus, X, RefreshCw,
-  ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp
+  ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp, Download
 } from "lucide-react";
 import { bancoCentralConfigurado, gerenciarUsuarios, obterPerfil, storageGet, storageSet, supabase } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
+import { exportarRelatorioExcel } from "./lib/relatorioExcel";
 import "./App.css";
 
 const NOTES = [2, 4, 6, 10, 20, 50];
@@ -842,6 +843,8 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
   const [caixa, setCaixa] = useState([]);
   const [vendasBarracas, setVendasBarracas] = useState({});
   const [loading, setLoading] = useState(true);
+  const [exportando, setExportando] = useState(false);
+  const [erroRelatorio, setErroRelatorio] = useState("");
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -854,6 +857,19 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
   }, [barracas]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  async function exportar() {
+    setExportando(true);
+    setErroRelatorio("");
+    try {
+      await exportarRelatorioExcel({ barracas, caixa, vendasBarracas });
+    } catch (error) {
+      console.error("Não foi possível gerar o relatório.", error);
+      setErroRelatorio("Não foi possível gerar o relatório Excel. Tente novamente.");
+    } finally {
+      setExportando(false);
+    }
+  }
 
   const totalCaixa = caixa.reduce((soma, venda) => soma + venda.valor, 0);
   const porBarraca = barracas.map((barraca) => ({
@@ -920,11 +936,13 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
       <div className="dashboard-actions">
         <div><h2>Resumo do evento</h2><p>Atualize para acompanhar a operação em tempo real.</p></div>
         <div className="dashboard-quick-actions">
+          <button className="btn-primary" disabled={loading || exportando} onClick={exportar}><Download size={16} /> {exportando ? "Gerando…" : "Exportar Excel"}</button>
           <button className="btn-secondary" onClick={() => onNavigate("caixa")}><Plus size={16} /> Nova venda</button>
           <button className="btn-secondary" onClick={() => onNavigate("acessos")}><Store size={16} /> Acessos</button>
           <button className="btn-secondary" onClick={carregar}><RefreshCw size={16} /> Atualizar</button>
         </div>
       </div>
+      {erroRelatorio && <div className="err-msg"><AlertCircle size={14} /> {erroRelatorio}</div>}
       <div className="metric-grid">
         <div className="metric-card metric-blue"><div className="metric-heading"><span>Vendido no caixa</span><i><Wallet size={18} /></i></div><strong>{formatMoney(totalCaixa)}</strong><small>{caixa.length} registros</small></div>
         <div className="metric-card metric-green"><div className="metric-heading"><span>Vendido nas barracas</span><i><Store size={18} /></i></div><strong>{formatMoney(totalBarracas)}</strong><small>{porBarraca.reduce((s, b) => s + b.quantidade, 0)} registros</small></div>
