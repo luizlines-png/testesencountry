@@ -127,3 +127,13 @@
   .mobile-bottom-nav { display: none; }.app-main { max-width: 1640px; padding: 36px clamp(30px, 4vw, 72px) 58px; }.site-footer { justify-content: flex-start; padding-left: clamp(30px, 4vw, 72px); }
   .login-root { padding: 36px; }.login-root .acesso-tela { grid-template-columns: 1.12fr .88fr; }.login-root .home-header { min-height: 510px; }.login-root .ticket { border-top: 0; border-left: 1px solid var(--line); }
 }
+
+.connection-banner { position: sticky; top: 68px; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 34px; padding: 7px 16px; color: #19324a; background: #dcecf8; border-bottom: 1px solid #b8d8ee; font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+.connection-banner svg { flex: 0 0 auto; }
+.connection-warning { color: #624610; background: #fff1c7; border-color: #ead28b; }
+.connection-offline { color: #7b2020; background: #fee2e2; border-color: #f1aaaa; }
+.connection-local { color: #584410; background: #fff6d8; border-color: #ead99d; }
+.success-toast { position: fixed; top: 18px; right: 18px; z-index: 100; display: flex; align-items: center; max-width: min(390px, calc(100vw - 28px)); min-height: 48px; padding: 12px 18px 12px 42px; color: #fff; background: #176b4b; border: 1px solid #0f573c; border-radius: 8px; box-shadow: 0 12px 30px rgba(16, 55, 42, .25); font-size: 13px; font-weight: 700; animation: toast-in .2s ease-out; }
+.success-toast::before { position: absolute; left: 16px; content: "\2713"; font-size: 18px; font-weight: 900; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 640px) { .success-toast { top: 12px; right: 14px; left: 14px; max-width: none; } }

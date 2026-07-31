@@ -57,6 +57,19 @@ usuário logado e confirma no banco que ele possui o papel `admin` antes de usar
 as operações administrativas do Auth. Nenhuma chave administrativa é enviada
 ao navegador ou à Vercel.
 
+### Atualizar um banco já existente
+
+Para uma instalação que já executou o esquema anteriormente, rode no SQL Editor
+o arquivo mais recente da pasta `supabase/migrations`. A migração torna a venda
+da barraca transacional e restringe a leitura de produtos e vendas ao perfil do
+usuário. Ela também habilita a sincronização em tempo real de barracas, produtos
+e vendas. Vendas feitas no caixa continuam sem alterar o estoque.
+
+Depois de executar a migração, abra o sistema em dois navegadores e confirme que
+uma venda feita em um deles aparece automaticamente no outro. Se o indicador de
+conexão mostrar reconexão por muito tempo, confira se o serviço Realtime está
+habilitado no projeto Supabase.
+
 ## Desenvolvimento
 
 ```bash

@@ -1,12 +1,17 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Store, Wallet, ClipboardList, Plus, Trash2, ArrowLeft, AlertCircle,
   Ticket, Package, PackageX, ShoppingCart, Minus, X, RefreshCw,
   ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp, Download
 } from "lucide-react";
-import { bancoCentralConfigurado, gerenciarUsuarios, obterPerfil, storageGet, storageSet, supabase } from "./lib/supabase";
+import {
+  assinarAlteracoes, bancoCentralConfigurado, criarVenda, excluirBarraca as excluirBarracaRegistro, excluirProduto, excluirVenda, excluirVendaBarraca,
+  gerenciarUsuarios, obterPerfil, registrarVendaBarraca, salvarBarraca as salvarBarracaRegistro, salvarProduto,
+  storageGet, supabase,
+} from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
 import { exportarRelatorioExcel } from "./lib/relatorioExcel";
+import { statusEstoque } from "./lib/regras";
 import "./App.css";
 
 const NOTES = [2, 4, 6, 10, 20, 50];
@@ -17,18 +22,68 @@ function uid() {
 function formatMoney(v) {
   return `R$ ${v.toFixed(2).replace(".", ",")}`;
 }
-function statusEstoque(quantidade, esgotado) {
-  if (esgotado || quantidade <= 0) return { label: "Esgotado", classe: "empty" };
-  if (quantidade <= 10) return { label: "Pouco estoque", classe: "low" };
-  if (quantidade >= 30) return { label: "Estoque alto", classe: "high" };
-  return { label: "Estoque normal", classe: "normal" };
-}
-
-
 const K_BARRACAS = "festa-barracas";
 const K_CAIXA = "festa-caixa-transacoes";
 const vendasKey = (id) => `festa-vendas-${id}`;
 const produtosKey = (id) => `festa-produtos-${id}`;
+
+function useConexao() {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const conectar = () => setOnline(true);
+    const desconectar = () => setOnline(false);
+    window.addEventListener("online", conectar);
+    window.addEventListener("offline", desconectar);
+    return () => {
+      window.removeEventListener("online", conectar);
+      window.removeEventListener("offline", desconectar);
+    };
+  }, []);
+  return online;
+}
+
+function useSincronizacao(ativa) {
+  const [status, setStatus] = useState(supabase ? "conectando" : "local");
+  const [versao, setVersao] = useState(0);
+  useEffect(() => {
+    if (!ativa) return undefined;
+    return assinarAlteracoes(
+      ["barracas", "produtos", "vendas"],
+      () => setVersao((atual) => atual + 1),
+      setStatus
+    );
+  }, [ativa]);
+  useEffect(() => {
+    if (!ativa) return undefined;
+    const atualizar = () => setVersao((atual) => atual + 1);
+    const aoVoltar = () => { if (document.visibilityState === "visible") atualizar(); };
+    window.addEventListener("online", atualizar);
+    document.addEventListener("visibilitychange", aoVoltar);
+    return () => {
+      window.removeEventListener("online", atualizar);
+      document.removeEventListener("visibilitychange", aoVoltar);
+    };
+  }, [ativa]);
+  useEffect(() => {
+    if (!ativa || !["degradado", "offline"].includes(status)) return undefined;
+    const intervalo = window.setInterval(() => setVersao((atual) => atual + 1), 15000);
+    return () => window.clearInterval(intervalo);
+  }, [ativa, status]);
+  return { status, versao };
+}
+
+function EstadoConexao({ online, sincronizacao }) {
+  if (sincronizacao === "local") return <div className="connection-banner connection-local">Modo local de demonstração</div>;
+  if (!online) return <div className="connection-banner connection-offline"><AlertCircle size={15} /> Sem internet. Não registre vendas até a conexão voltar.</div>;
+  if (["degradado", "offline"].includes(sincronizacao)) return <div className="connection-banner connection-warning"><RefreshCw size={15} /> Reconectando a atualização em tempo real…</div>;
+  if (sincronizacao === "conectando") return <div className="connection-banner"><RefreshCw size={15} /> Conectando ao evento…</div>;
+  return null;
+}
+
+function ToastSucesso({ mensagem }) {
+  if (!mensagem) return null;
+  return <div className="success-toast" role="status" aria-live="polite">{mensagem}</div>;
+}
 
 function Ticket_({ children, accent = "gold", className = "" }) {
   return (
@@ -136,11 +191,11 @@ function SiteFooter() {
   );
 }
 
-function BillPad({ onAdd }) {
+function BillPad({ onAdd, disabled = false }) {
   return (
     <div className="bill-pad">
       {NOTES.map((n) => (
-        <button key={n} className="bill" onClick={() => onAdd(n)}>
+        <button key={n} className="bill" disabled={disabled} onClick={() => onAdd(n)}>
           <span className="bill-val">R$ {n}</span>
           <span className="bill-label">nota</span>
         </button>
@@ -149,7 +204,7 @@ function BillPad({ onAdd }) {
   );
 }
 
-function CustomAmount({ onAdd, itemField, item, setItem }) {
+function CustomAmount({ onAdd, itemField, item, setItem, disabled = false }) {
   const [val, setVal] = useState("");
   const [err, setErr] = useState("");
 
@@ -179,14 +234,14 @@ function CustomAmount({ onAdd, itemField, item, setItem }) {
           onChange={(e) => { setVal(e.target.value); setErr(""); }}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
-        <button onClick={submit}>Adicionar</button>
+        <button disabled={disabled} onClick={submit}>Adicionar</button>
       </div>
       {err && <div className="err-msg"><AlertCircle size={14} /> {err}</div>}
     </div>
   );
 }
 
-function Historico({ items, onDelete, emptyText }) {
+function Historico({ items, onDelete, emptyText, disabled = false }) {
   if (!items.length) return <div className="hist-empty">{emptyText}</div>;
   return (
     <div className="hist-list">
@@ -200,7 +255,7 @@ function Historico({ items, onDelete, emptyText }) {
             <span className="hist-time">
               {new Date(it.hora).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
             </span>
-            <button className="hist-del" onClick={() => onDelete(it.id)} title="Remover">
+            <button className="hist-del" disabled={disabled} onClick={() => onDelete(it.id)} title="Remover">
               <Trash2 size={14} />
             </button>
           </div>
@@ -212,7 +267,7 @@ function Historico({ items, onDelete, emptyText }) {
 
 /* ---------------- CAIXA ---------------- */
 
-function TelaCaixa({ onBack }) {
+function TelaCaixa({ onBack, refreshSignal, online }) {
   const [tab, setTab] = useState("pedido");
   const [transacoes, setTransacoes] = useState([]);
   const [barracas, setBarracas] = useState([]);
@@ -223,6 +278,14 @@ function TelaCaixa({ onBack }) {
   const [saving, setSaving] = useState(false);
   const [itemAvulso, setItemAvulso] = useState("");
   const [barracasAbertas, setBarracasAbertas] = useState({});
+  const [erroOperacao, setErroOperacao] = useState("");
+  const [sucessoOperacao, setSucessoOperacao] = useState("");
+  const operacaoEmCurso = useRef(false);
+  useEffect(() => {
+    if (!sucessoOperacao) return undefined;
+    const timer = window.setTimeout(() => setSucessoOperacao(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [sucessoOperacao]);
 
   useEffect(() => {
     (async () => {
@@ -230,7 +293,7 @@ function TelaCaixa({ onBack }) {
       setTransacoes(data || []);
       setLoading(false);
     })();
-  }, []);
+  }, [refreshSignal]);
 
   const carregarProdutos = useCallback(async () => {
     setLoadingProdutos(true);
@@ -244,7 +307,7 @@ function TelaCaixa({ onBack }) {
     setLoadingProdutos(false);
   }, []);
 
-  useEffect(() => { carregarProdutos(); }, [carregarProdutos]);
+  useEffect(() => { carregarProdutos(); }, [carregarProdutos, refreshSignal]);
 
   const toggleBarraca = (id) => {
     setBarracasAbertas((prev) => ({
@@ -253,13 +316,29 @@ function TelaCaixa({ onBack }) {
     }));
   };
 
-  const persistTransacoes = useCallback(async (list) => {
+  const registrarTransacao = useCallback(async (nova) => {
+    if (operacaoEmCurso.current || !online) {
+      if (!online) setErroOperacao("Sem internet. Aguarde a conexão voltar antes de registrar a venda.");
+      return false;
+    }
+    operacaoEmCurso.current = true;
     setSaving(true);
-    await storageSet(K_CAIXA, list, true);
-    setSaving(false);
-  }, []);
+    setErroOperacao("");
+    try {
+      const salva = await criarVenda(K_CAIXA, nova);
+      setTransacoes((atuais) => [...atuais, salva]);
+      setSucessoOperacao("Venda registrada com sucesso.");
+      return true;
+    } catch (error) {
+      setErroOperacao(`A venda não foi registrada: ${error.message}`);
+      return false;
+    } finally {
+      operacaoEmCurso.current = false;
+      setSaving(false);
+    }
+  }, [online]);
 
-  function addValorAvulso(valor) {
+  async function addValorAvulso(valor) {
     const novo = {
       id: uid(),
       valor,
@@ -268,16 +347,21 @@ function TelaCaixa({ onBack }) {
       origem: "caixa",
       tipo: "avulsa",
     };
-    const list = [...transacoes, novo];
-    setTransacoes(list);
-    persistTransacoes(list);
-    setItemAvulso("");
+    if (await registrarTransacao(novo)) setItemAvulso("");
   }
 
-  function deleteTransacao(id) {
-    const list = transacoes.filter((t) => t.id !== id);
-    setTransacoes(list);
-    persistTransacoes(list);
+  async function deleteTransacao(id) {
+    if (operacaoEmCurso.current || !online) return;
+    if (!window.confirm("Remover esta venda do caixa?")) return;
+    operacaoEmCurso.current = true;
+    setSaving(true); setErroOperacao("");
+    try {
+      await excluirVenda(K_CAIXA, id);
+      setTransacoes((atuais) => atuais.filter((t) => t.id !== id));
+      setSucessoOperacao("Lançamento removido.");
+    } catch (error) {
+      setErroOperacao(`A venda não foi removida: ${error.message}`);
+    } finally { operacaoEmCurso.current = false; setSaving(false); }
   }
 
   function addToCart(barraca, produto) {
@@ -319,7 +403,7 @@ function TelaCaixa({ onBack }) {
   const cartItems = Object.entries(cart);
   const cartTotal = cartItems.reduce((s, [, v]) => s + v.preco * v.qtd, 0);
 
-  function finalizarPedido() {
+  async function finalizarPedido() {
     if (cartItems.length === 0) return;
     const descricao = cartItems.map(([, v]) => `${v.qtd}x ${v.nome}`).join(", ");
     const agora = Date.now();
@@ -340,10 +424,7 @@ function TelaCaixa({ onBack }) {
         subtotal: v.preco * v.qtd,
       })),
     };
-    const list = [...transacoes, novo];
-    setTransacoes(list);
-    persistTransacoes(list);
-    setCart({});
+    if (await registrarTransacao(novo)) setCart({});
   }
 
   const total = transacoes.reduce((s, t) => s + t.valor, 0);
@@ -454,23 +535,26 @@ function TelaCaixa({ onBack }) {
                 </div>
               </div>
             )}
-            <button className="btn-primary" disabled={cartItems.length === 0} onClick={finalizarPedido}>
+            <button className="btn-primary" disabled={cartItems.length === 0 || saving} onClick={finalizarPedido}>
               Finalizar venda
             </button>
           </Ticket_>
         </>
       )}
 
+      {erroOperacao && <div className="err-msg"><AlertCircle size={14} /> {erroOperacao}</div>}
+      <ToastSucesso mensagem={sucessoOperacao} />
+
       {tab === "avulso" && (
         <>
           <SectionLabel>Registrar valor avulso (sem produto cadastrado)</SectionLabel>
-          <BillPad onAdd={addValorAvulso} />
-          <CustomAmount onAdd={addValorAvulso} itemField item={itemAvulso} setItem={setItemAvulso} />
+          <BillPad onAdd={addValorAvulso} disabled={saving || !online} />
+          <CustomAmount onAdd={addValorAvulso} itemField item={itemAvulso} setItem={setItemAvulso} disabled={saving || !online} />
         </>
       )}
 
       <SectionLabel>Últimas vendas {saving && <em className="saving">salvando…</em>}</SectionLabel>
-      <Historico items={transacoes} onDelete={deleteTransacao} emptyText="Nenhuma venda registrada ainda." />
+      <Historico items={transacoes} onDelete={deleteTransacao} emptyText="Nenhuma venda registrada ainda." disabled={saving || !online} />
     </div>
   );
 }
@@ -541,7 +625,7 @@ function ProdutoForm({ onAdd }) {
   );
 }
 
-function TelaBarracaVendas({ barraca, onBack }) {
+function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
   const [tab, setTab] = useState("vender");
   const [vendas, setVendas] = useState([]);
   const [produtos, setProdutos] = useState([]);
@@ -549,6 +633,14 @@ function TelaBarracaVendas({ barraca, onBack }) {
   const [loadingProdutos, setLoadingProdutos] = useState(true);
   const [saving, setSaving] = useState(false);
   const [itemAvulso, setItemAvulso] = useState("");
+  const [erroOperacao, setErroOperacao] = useState("");
+  const [sucessoOperacao, setSucessoOperacao] = useState("");
+  const operacaoEmCurso = useRef(false);
+  useEffect(() => {
+    if (!sucessoOperacao) return undefined;
+    const timer = window.setTimeout(() => setSucessoOperacao(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [sucessoOperacao]);
 
   useEffect(() => {
     (async () => {
@@ -559,75 +651,92 @@ function TelaBarracaVendas({ barraca, onBack }) {
       setProdutos(p || []);
       setLoadingProdutos(false);
     })();
-  }, [barraca.id]);
+  }, [barraca.id, refreshSignal]);
 
-  const persistVendas = useCallback(async (list) => {
-    setSaving(true);
-    await storageSet(vendasKey(barraca.id), list, true);
-    setSaving(false);
-  }, [barraca.id]);
-
-  const persistProdutos = useCallback(async (list) => {
-    await storageSet(produtosKey(barraca.id), list, true);
-  }, [barraca.id]);
-
-  function registrarVendaAvulsa(valor) {
+  async function registrarVendaAvulsa(valor) {
+    if (operacaoEmCurso.current || !online) {
+      if (!online) setErroOperacao("Sem internet. Aguarde a conexão voltar antes de registrar a venda.");
+      return;
+    }
+    operacaoEmCurso.current = true;
     const novo = { id: uid(), valor, item: itemAvulso.trim() || null, hora: Date.now() };
-    const list = [...vendas, novo];
-    setVendas(list);
-    persistVendas(list);
-    setItemAvulso("");
+    setSaving(true); setErroOperacao("");
+    try {
+      const salva = await criarVenda(vendasKey(barraca.id), novo);
+      setVendas((atuais) => [...atuais, salva]);
+      setItemAvulso("");
+      setSucessoOperacao("Venda avulsa registrada com sucesso.");
+    } catch (error) { setErroOperacao(`A venda não foi registrada: ${error.message}`); }
+    finally { operacaoEmCurso.current = false; setSaving(false); }
   }
 
-  function venderProduto(produto) {
-    if (produto.esgotado || produto.quantidade <= 0) return;
-    const novaQtd = produto.quantidade - 1;
-    const novosProdutos = produtos.map((p) =>
-      p.id === produto.id ? { ...p, quantidade: novaQtd, esgotado: novaQtd <= 0 } : p
-    );
-    setProdutos(novosProdutos);
-    persistProdutos(novosProdutos);
+  async function venderProduto(produto) {
+    if (operacaoEmCurso.current || !online || produto.esgotado || produto.quantidade <= 0) return;
+    operacaoEmCurso.current = true;
+    const novaVenda = {
+      id: uid(), valor: produto.preco, item: produto.nome, hora: Date.now(), tipo: "produto",
+      itens: [{ produtoId: produto.id, nome: produto.nome, quantidade: 1 }],
+    };
+    setSaving(true); setErroOperacao("");
+    try {
+      const resultado = await registrarVendaBarraca(barraca.id, produto, novaVenda);
+      setProdutos((atuais) => atuais.map((p) => p.id === produto.id ? resultado.produto : p));
+      setVendas((atuais) => [...atuais, resultado.venda]);
+      setSucessoOperacao("Venda registrada e estoque atualizado.");
+    } catch (error) { setErroOperacao(`A venda não foi registrada: ${error.message}`); }
+    finally { operacaoEmCurso.current = false; setSaving(false); }
+  }
 
-    const novaVenda = { id: uid(), valor: produto.preco, item: produto.nome, hora: Date.now() };
-    const list = [...vendas, novaVenda];
-    setVendas(list);
-    persistVendas(list);
+  async function atualizarProduto(produto) {
+    setErroOperacao("");
+    try {
+      const salvo = await salvarProduto(barraca.id, produto);
+      setProdutos((atuais) => atuais.map((p) => p.id === salvo.id ? salvo : p));
+    } catch (error) { setErroOperacao(`O produto não foi atualizado: ${error.message}`); }
   }
 
   function toggleEsgotado(produto) {
-    const novosProdutos = produtos.map((p) =>
-      p.id === produto.id ? { ...p, esgotado: !p.esgotado } : p
-    );
-    setProdutos(novosProdutos);
-    persistProdutos(novosProdutos);
+    atualizarProduto({ ...produto, esgotado: !produto.esgotado });
   }
 
   function ajustarEstoque(produto, delta) {
     const novaQtd = Math.max(0, produto.quantidade + delta);
-    const novosProdutos = produtos.map((p) =>
-      p.id === produto.id ? { ...p, quantidade: novaQtd, esgotado: novaQtd <= 0 ? true : p.esgotado } : p
-    );
-    setProdutos(novosProdutos);
-    persistProdutos(novosProdutos);
+    atualizarProduto({ ...produto, quantidade: novaQtd, esgotado: novaQtd <= 0 ? true : produto.esgotado });
   }
 
-  function addProduto({ nome, preco, quantidade }) {
+  async function addProduto({ nome, preco, quantidade }) {
     const novo = { id: uid(), nome, preco, quantidade, esgotado: quantidade <= 0 };
-    const list = [...produtos, novo];
-    setProdutos(list);
-    persistProdutos(list);
+    setErroOperacao("");
+    try {
+      const salvo = await salvarProduto(barraca.id, novo);
+      setProdutos((atuais) => [...atuais, salvo]);
+    } catch (error) { setErroOperacao(`O produto não foi cadastrado: ${error.message}`); }
   }
 
-  function removeProduto(id) {
-    const list = produtos.filter((p) => p.id !== id);
-    setProdutos(list);
-    persistProdutos(list);
+  async function removeProduto(id) {
+    if (!window.confirm("Excluir este produto? O histórico de vendas será preservado.")) return;
+    setErroOperacao("");
+    try {
+      await excluirProduto(barraca.id, id);
+      setProdutos((atuais) => atuais.filter((p) => p.id !== id));
+    } catch (error) { setErroOperacao(`O produto não foi excluído: ${error.message}`); }
   }
 
-  function deleteVenda(id) {
-    const list = vendas.filter((v) => v.id !== id);
-    setVendas(list);
-    persistVendas(list);
+  async function deleteVenda(id) {
+    if (operacaoEmCurso.current || !online) return;
+    const venda = vendas.find((item) => item.id === id);
+    if (!venda) return;
+    operacaoEmCurso.current = true;
+    setSaving(true); setErroOperacao("");
+    try {
+      const resultado = await excluirVendaBarraca(barraca.id, venda, produtos);
+      setVendas((atuais) => atuais.filter((v) => v.id !== id));
+      if (resultado.produto) {
+        setProdutos((atuais) => atuais.map((produto) => produto.id === resultado.produto.id ? resultado.produto : produto));
+      }
+      setSucessoOperacao(resultado.produto ? "Venda removida e unidade devolvida ao estoque." : "Lançamento removido.");
+    } catch (error) { setErroOperacao(`A venda não foi removida: ${error.message}`); }
+    finally { operacaoEmCurso.current = false; setSaving(false); }
   }
 
   const total = vendas.reduce((s, v) => s + v.valor, 0);
@@ -664,7 +773,7 @@ function TelaBarracaVendas({ barraca, onBack }) {
                 <button
                   key={p.id}
                   className={`product-btn ${p.esgotado || p.quantidade <= 0 ? "disabled" : ""}`}
-                  disabled={p.esgotado || p.quantidade <= 0}
+                  disabled={saving || !online || p.esgotado || p.quantidade <= 0}
                   onClick={() => venderProduto(p)}
                 >
                   <span className="product-nome">{p.nome}</span>
@@ -678,9 +787,12 @@ function TelaBarracaVendas({ barraca, onBack }) {
           )}
 
           <SectionLabel>Venda avulsa (sem produto cadastrado)</SectionLabel>
-          <CustomAmount onAdd={registrarVendaAvulsa} itemField item={itemAvulso} setItem={setItemAvulso} />
+          <CustomAmount onAdd={registrarVendaAvulsa} itemField item={itemAvulso} setItem={setItemAvulso} disabled={saving || !online} />
         </>
       )}
+
+      {erroOperacao && <div className="err-msg"><AlertCircle size={14} /> {erroOperacao}</div>}
+      <ToastSucesso mensagem={sucessoOperacao} />
 
       {tab === "produtos" && (
         <>
@@ -720,14 +832,14 @@ function TelaBarracaVendas({ barraca, onBack }) {
       )}
 
       <SectionLabel>Últimas vendas {saving && <em className="saving">salvando…</em>}</SectionLabel>
-      <Historico items={vendas} onDelete={deleteVenda} emptyText="Nenhuma venda registrada ainda." />
+      <Historico items={vendas} onDelete={deleteVenda} emptyText="Nenhuma venda registrada ainda." disabled={saving || !online} />
     </div>
   );
 }
 
 /* ---------------- PAINEL ---------------- */
 
-function TelaPainel({ barracas, setBarracas, onBack }) {
+function TelaPainel({ barracas, setBarracas, onBack, refreshSignal }) {
   const [nome, setNome] = useState("");
   const [erro, setErro] = useState("");
   const [caixaTotal, setCaixaTotal] = useState(0);
@@ -748,7 +860,7 @@ function TelaPainel({ barracas, setBarracas, onBack }) {
     setLoading(false);
   }, [barracas]);
 
-  useEffect(() => { carregarRelatorio(); }, [carregarRelatorio]);
+  useEffect(() => { carregarRelatorio(); }, [carregarRelatorio, refreshSignal]);
 
   async function addBarraca() {
     const n = nome.trim();
@@ -758,19 +870,20 @@ function TelaPainel({ barracas, setBarracas, onBack }) {
     }
     setErro("");
     const nova = { id: uid(), nome: n };
-    const list = [...barracas, nova];
-    
-    setBarracas(list);
-    await storageSet(K_BARRACAS, list, true);
-    setNome("");
-    carregarRelatorio();
+    try {
+      const salva = await salvarBarracaRegistro(nova);
+      setBarracas((atuais) => [...atuais, salva]);
+      setNome("");
+    } catch (error) { setErro(`A barraca não foi cadastrada: ${error.message}`); }
   }
 
   async function removeBarraca(id) {
-    const list = barracas.filter((b) => b.id !== id);
-    setBarracas(list);
-    await storageSet(K_BARRACAS, list, true);
-    carregarRelatorio();
+    if (!window.confirm("Excluir esta barraca? Os produtos serão removidos e os operadores vinculados perderão o acesso à barraca.")) return;
+    setErro("");
+    try {
+      await excluirBarracaRegistro(id);
+      setBarracas((atuais) => atuais.filter((b) => b.id !== id));
+    } catch (error) { setErro(`A barraca não foi excluída: ${error.message}`); }
   }
 
   const totalBarracas = Object.values(barracaTotais).reduce((s, v) => s + v, 0);
@@ -839,7 +952,7 @@ function TelaPainel({ barracas, setBarracas, onBack }) {
 
 /* ---------------- DASHBOARD E ACESSOS ---------------- */
 
-function TelaDashboard({ barracas, onBack, onNavigate }) {
+function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   const [caixa, setCaixa] = useState([]);
   const [vendasBarracas, setVendasBarracas] = useState({});
   const [loading, setLoading] = useState(true);
@@ -856,7 +969,7 @@ function TelaDashboard({ barracas, onBack, onNavigate }) {
     setLoading(false);
   }, [barracas]);
 
-  useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { carregar(); }, [carregar, refreshSignal]);
 
   async function exportar() {
     setExportando(true);
@@ -1075,16 +1188,20 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
     event.preventDefault();
     const nome = nomeBarraca.trim();
     if (!nome) { setErro("Digite o nome da barraca."); return; }
-    const lista = [...barracas, { id: uid(), nome }];
-    setBarracas(lista);
-    await storageSet(K_BARRACAS, lista, true);
-    setNomeBarraca("");
     setErro("");
+    try {
+      const salva = await salvarBarracaRegistro({ id: uid(), nome });
+      setBarracas((atuais) => [...atuais, salva]);
+      setNomeBarraca("");
+    } catch (error) { setErro(`A barraca não foi cadastrada: ${error.message}`); }
   }
   async function excluirBarraca(id) {
-    const lista = barracas.filter((barraca) => barraca.id !== id);
-    setBarracas(lista);
-    await storageSet(K_BARRACAS, lista, true);
+    if (!window.confirm("Excluir esta barraca? Os produtos serão removidos e os operadores vinculados perderão o acesso à barraca.")) return;
+    setErro("");
+    try {
+      await excluirBarracaRegistro(id);
+      setBarracas((atuais) => atuais.filter((barraca) => barraca.id !== id));
+    } catch (error) { setErro(`A barraca não foi excluída: ${error.message}`); }
   }
   const nomePerfil = (papel) => ({ admin: "Administrador", caixa: "Caixa", barraca: "Barraca" }[papel]);
 
@@ -1197,6 +1314,9 @@ export default function App() {
   const [perfil, setPerfil] = useState(null);
   const [carregandoAcesso, setCarregandoAcesso] = useState(bancoCentralConfigurado);
   const [erroAcesso, setErroAcesso] = useState("");
+  const online = useConexao();
+  const podeOperar = !supabase || online;
+  const sincronizacao = useSincronizacao(Boolean(session && perfil));
 
   const abrirModuloInicial = (perfilAtual) => {
     if (perfilAtual.papel === "admin") { setScreen("dashboard"); return; }
@@ -1254,7 +1374,7 @@ export default function App() {
       const data = await storageGet(K_BARRACAS, true);
       setBarracas(data || []);
     })();
-  }, []);
+  }, [sincronizacao.versao]);
 
   if (carregandoAcesso) {
     return <div className="app-root"><div className="tela"><div className="hist-empty">Carregando acesso…</div></div></div>;
@@ -1296,6 +1416,7 @@ export default function App() {
   return (
     <div className="app-root">
       <Navbar screen={screen} onNavigate={setScreen} perfil={perfil} onLogout={sair} />
+      <EstadoConexao online={online} sincronizacao={sincronizacao.status} />
       <main className="app-main">
       {screen === "home" && (
         <div className="tela">
@@ -1347,14 +1468,14 @@ export default function App() {
         </div>
       )}
 
-      {screen === "caixa" && <TelaCaixa onBack={() => setScreen("home")} />}
+      {screen === "caixa" && <TelaCaixa onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} />}
 
       {screen === "barraca_select" && (
         perfil?.papel === "barraca" ? (
           (() => {
             const barracaVinculada = barracas.find((b) => b.id === perfil.barraca_id);
             return barracaVinculada ? (
-              <TelaBarracaVendas barraca={barracaVinculada} onBack={() => setScreen("home")} />
+              <TelaBarracaVendas barraca={barracaVinculada} onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} />
             ) : (
               <div className="tela">
                 <TopBar title="Barraca" subtitle="Acesso do operador" onBack={() => setScreen("home")} icon={<Store size={20} />} />
@@ -1372,14 +1493,14 @@ export default function App() {
       )}
 
       {screen === "barraca_vendas" && barracaAtiva && (
-        <TelaBarracaVendas barraca={barracaAtiva} onBack={() => setScreen("barraca_select")} />
+        <TelaBarracaVendas barraca={barracaAtiva} onBack={() => setScreen("barraca_select")} refreshSignal={sincronizacao.versao} online={podeOperar} />
       )}
 
       {screen === "painel" && (
-        <TelaPainel barracas={barracas} setBarracas={setBarracas} onBack={() => setScreen("home")} />
+        <TelaPainel barracas={barracas} setBarracas={setBarracas} onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} />
       )}
       {screen === "dashboard" && podeAcessarPainel && (
-        <TelaDashboard barracas={barracas} onBack={() => setScreen("home")} onNavigate={setScreen} />
+        <TelaDashboard barracas={barracas} onBack={() => setScreen("home")} onNavigate={setScreen} refreshSignal={sincronizacao.versao} />
       )}
       {screen === "acessos" && podeAcessarPainel && (
         <TelaAcessos barracas={barracas} setBarracas={setBarracas} usuarioAtualId={perfil?.id} onBack={() => setScreen("home")} />
