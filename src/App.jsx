@@ -3,12 +3,13 @@ import {
   Store, Wallet, ClipboardList, Plus, Trash2, ArrowLeft, AlertCircle,
   Ticket, Package, PackageX, ShoppingCart, Minus, X, RefreshCw,
   ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp, Download,
-  Users, UserRound, Baby, Undo2, Check
+  Users, UserRound, Baby, Undo2, Check, Archive, RotateCcw
 } from "lucide-react";
 import {
   assinarAlteracoes, bancoCentralConfigurado, criarVenda, excluirBarraca as excluirBarracaRegistro, excluirProduto, excluirVenda, excluirVendaBarraca,
   gerenciarUsuarios, obterPerfil, registrarVendaBarraca, salvarBarraca as salvarBarracaRegistro, salvarProduto,
   storageGet, supabase, listarEntradas, registrarEntrada, excluirEntrada,
+  listarHistoricos, arquivarEResetarEvento, restaurarEvento,
 } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
 import { exportarRelatorioExcel } from "./lib/relatorioExcel";
@@ -156,6 +157,7 @@ function Navbar({ screen, onNavigate, perfil, onLogout }) {
         {podePainel && <button className={screen === "painel" ? "active" : ""} onClick={() => navegar("painel")}>Painel</button>}
         {podePainel && <button className={screen === "dashboard" ? "active" : ""} onClick={() => navegar("dashboard")}>Dashboard</button>}
         {podePainel && <button className={screen === "acessos" ? "active" : ""} onClick={() => navegar("acessos")}>Acessos</button>}
+        {podePainel && <button className={screen === "historico" ? "active" : ""} onClick={() => navegar("historico")}>Histórico</button>}
       </nav>
       {perfil && <button className="nav-logout" onClick={onLogout}><LogOut size={17} /> Sair da conta</button>}
     </header>
@@ -1079,23 +1081,81 @@ function TelaPainel({ barracas, setBarracas, onBack, refreshSignal }) {
 
 /* ---------------- DASHBOARD E ACESSOS ---------------- */
 
+function TelaHistorico({ onBack }) {
+  const [historicos, setHistoricos] = useState([]);
+  const [nome, setNome] = useState("");
+  const [carregando, setCarregando] = useState(true);
+  const [processando, setProcessando] = useState(false);
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState("");
+  const carregar = useCallback(async () => {
+    setCarregando(true);
+    try { setHistoricos(await listarHistoricos()); }
+    catch (error) { setErro(`Não foi possível carregar o histórico: ${error.message}`); }
+    finally { setCarregando(false); }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+  async function resetar() {
+    if (!nome.trim()) { setErro("Dê um nome para identificar este evento no histórico."); return; }
+    if (!window.confirm(`Arquivar o estado atual como “${nome.trim()}” e iniciar um evento limpo? Vendas, entradas e produtos atuais serão retirados da operação.`)) return;
+    setProcessando(true); setErro(""); setSucesso("");
+    try { await arquivarEResetarEvento(nome); setNome(""); setSucesso("Evento arquivado e operação resetada com segurança."); await carregar(); }
+    catch (error) { setErro(`O reset não foi concluído: ${error.message}`); }
+    finally { setProcessando(false); }
+  }
+  async function restaurar(historico) {
+    if (!window.confirm(`Restaurar “${historico.nome}”? Os dados que estão na operação agora serão substituídos. Se precisar deles, arquive-os antes.`)) return;
+    setProcessando(true); setErro(""); setSucesso("");
+    try { await restaurarEvento(historico); setSucesso(`“${historico.nome}” foi restaurado.`); }
+    catch (error) { setErro(`Não foi possível restaurar: ${error.message}`); }
+    finally { setProcessando(false); }
+  }
+  const quantidade = (historico, chave) => historico.dados?.[chave]?.length || 0;
+  return <div className="tela">
+    <TopBar title="Histórico" subtitle="Arquivo e reinício de eventos" onBack={onBack} icon={<Archive size={20} />} />
+    {sucesso && <div className="success-inline"><Check size={16} /> {sucesso}</div>}
+    {erro && <div className="err-msg"><AlertCircle size={14} /> {erro}</div>}
+    <div className="dashboard-panel reset-panel">
+      <div className="panel-heading"><div><h3>Iniciar um evento limpo</h3><p>Uma cópia é criada antes da limpeza. Barracas e acessos são preservados.</p></div></div>
+      <div className="reset-form"><input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex.: Encountry 2026 — testes" disabled={processando} /><button className="btn-danger" onClick={resetar} disabled={processando}><Archive size={16} /> {processando ? "Processando…" : "Arquivar e resetar"}</button></div>
+    </div>
+    <SectionLabel>Eventos arquivados</SectionLabel>
+    <div className="history-grid">
+      {carregando && <div className="hist-empty">Carregando histórico…</div>}
+      {!carregando && historicos.length === 0 && <div className="hist-empty">Nenhum evento arquivado ainda.</div>}
+      {historicos.map((historico) => <div className="dashboard-panel history-card" key={historico.id}>
+        <div><h3>{historico.nome}</h3><p>{new Date(historico.criado_em).toLocaleString("pt-BR")}</p></div>
+        <div className="history-counts"><span>{quantidade(historico, "vendas")} vendas</span><span>{quantidade(historico, "entradas")} entradas</span><span>{quantidade(historico, "produtos")} produtos</span></div>
+        <button className="btn-secondary" onClick={() => restaurar(historico)} disabled={processando}><RotateCcw size={15} /> Restaurar</button>
+      </div>)}
+    </div>
+  </div>;
+}
+
 function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   const [caixa, setCaixa] = useState([]);
   const [vendasBarracas, setVendasBarracas] = useState({});
+  const [produtosBarracas, setProdutosBarracas] = useState({});
   const [entradas, setEntradas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exportando, setExportando] = useState(false);
   const [erroRelatorio, setErroRelatorio] = useState("");
+  const [barracaExpandida, setBarracaExpandida] = useState(null);
 
   const carregar = useCallback(async () => {
     setLoading(true);
     const caixaData = (await storageGet(K_CAIXA, true)) || [];
     const entradasData = (await listarEntradas()) || [];
     const vendas = {};
-    for (const barraca of barracas) vendas[barraca.id] = (await storageGet(vendasKey(barraca.id), true)) || [];
+    const produtos = {};
+    for (const barraca of barracas) {
+      vendas[barraca.id] = (await storageGet(vendasKey(barraca.id), true)) || [];
+      produtos[barraca.id] = (await storageGet(produtosKey(barraca.id), true)) || [];
+    }
     setCaixa(caixaData);
     setEntradas(entradasData);
     setVendasBarracas(vendas);
+    setProdutosBarracas(produtos);
     setLoading(false);
   }, [barracas]);
 
@@ -1115,10 +1175,23 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   }
 
   const totalCaixa = caixa.reduce((soma, venda) => soma + venda.valor, 0);
+  const itensMaisVendidos = (vendas = []) => Object.values(vendas.reduce((acumulado, venda) => {
+    const itens = venda.itens?.length
+      ? venda.itens.map((item) => ({ nome: item.nome || venda.item || "Item não identificado", quantidade: Number(item.quantidade) || 1, valor: Number(item.subtotal) || venda.valor }))
+      : [{ nome: venda.item || "Venda avulsa", quantidade: 1, valor: venda.valor }];
+    itens.forEach((item) => {
+      const chave = item.nome.trim().toLocaleLowerCase("pt-BR");
+      acumulado[chave] = acumulado[chave]
+        ? { ...acumulado[chave], quantidade: acumulado[chave].quantidade + item.quantidade, valor: acumulado[chave].valor + item.valor }
+        : item;
+    });
+    return acumulado;
+  }, {})).sort((a, b) => b.quantidade - a.quantidade || b.valor - a.valor).slice(0, 5);
   const porBarraca = barracas.map((barraca) => ({
     ...barraca,
     total: (vendasBarracas[barraca.id] || []).reduce((soma, venda) => soma + venda.valor, 0),
     quantidade: (vendasBarracas[barraca.id] || []).length,
+    maisVendidos: itensMaisVendidos(vendasBarracas[barraca.id] || []),
   })).sort((a, b) => b.total - a.total);
   const totalBarracas = porBarraca.reduce((soma, barraca) => soma + barraca.total, 0);
   const totalVendas = caixa.length + porBarraca.reduce((soma, barraca) => soma + barraca.quantidade, 0);
@@ -1177,6 +1250,21 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
       }, {})
     ).sort((a, b) => b.quantidade - a.quantidade).slice(0, 5)
     : [];
+  const adultos = entradas.filter((entrada) => entrada.faixa === "adulto").length;
+  const criancas = entradas.length - adultos;
+  const visitantes = entradas.filter((entrada) => entrada.vinculo === "visitante").length;
+  const membros = entradas.length - visitantes;
+  const percentual = (valor) => entradas.length ? Math.round((valor / entradas.length) * 100) : 0;
+  const produtosEstoque = barracas.flatMap((barraca) => (produtosBarracas[barraca.id] || []).map((produto) => ({
+    ...produto, barracaNome: barraca.nome, status: statusEstoque(produto.quantidade, produto.esgotado),
+  }))).sort((a, b) => {
+    const prioridade = { empty: 0, low: 1, normal: 2, high: 3 };
+    return prioridade[a.status.classe] - prioridade[b.status.classe] || a.quantidade - b.quantidade;
+  });
+  const movimentosRecentes = [
+    ...ultimas.map((venda) => ({ id: `v-${venda.id}`, hora: venda.hora, titulo: venda.item || "Venda avulsa", detalhe: `${venda.origemNome} · ${formatMoney(venda.valor)}`, tipo: "venda" })),
+    ...entradas.map((entrada) => ({ id: `e-${entrada.id}`, hora: entrada.hora, titulo: "Entrada registrada", detalhe: `${entrada.faixa === "adulto" ? "Adulto" : "Criança"} · ${entrada.vinculo === "visitante" ? "Visitante" : "Membro"}`, tipo: "entrada" })),
+  ].sort((a, b) => b.hora - a.hora).slice(0, 6);
 
   return (
     <div className="tela">
@@ -1187,13 +1275,14 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
           <button className="btn-primary" disabled={loading || exportando} onClick={exportar}><Download size={16} /> {exportando ? "Gerando…" : "Exportar Excel"}</button>
           <button className="btn-secondary" onClick={() => onNavigate("caixa")}><Plus size={16} /> Nova venda</button>
           <button className="btn-secondary" onClick={() => onNavigate("acessos")}><Store size={16} /> Acessos</button>
+          <button className="btn-secondary" onClick={() => onNavigate("historico")}><Archive size={16} /> Histórico</button>
           <button className="btn-secondary" onClick={carregar}><RefreshCw size={16} /> Atualizar</button>
         </div>
       </div>
       {erroRelatorio && <div className="err-msg"><AlertCircle size={14} /> {erroRelatorio}</div>}
       <div className="metric-grid">
-        <div className="metric-card metric-blue"><div className="metric-heading"><span>Vendido no caixa</span><i><Wallet size={18} /></i></div><strong>{formatMoney(totalCaixa)}</strong><small>{caixa.length} registros</small></div>
-        <div className="metric-card metric-green"><div className="metric-heading"><span>Vendido nas barracas</span><i><Store size={18} /></i></div><strong>{formatMoney(totalBarracas)}</strong><small>{porBarraca.reduce((s, b) => s + b.quantidade, 0)} registros</small></div>
+        <div className="metric-card metric-blue"><div className="metric-heading"><span>Total de vendas no caixa</span><i><Wallet size={18} /></i></div><strong>{formatMoney(totalCaixa)}</strong><small>{caixa.length} vendas registradas</small></div>
+        <div className="metric-card metric-green"><div className="metric-heading"><span>Total de vendas nas barracas</span><i><Store size={18} /></i></div><strong>{formatMoney(totalBarracas)}</strong><small>{porBarraca.reduce((soma, barraca) => soma + barraca.quantidade, 0)} vendas registradas</small></div>
         <div className="metric-card metric-gold"><div className="metric-heading"><span>Vendas registradas</span><i><ClipboardList size={18} /></i></div><strong>{totalVendas}</strong><small>Caixa e barracas</small></div>
         <div className="metric-card metric-portaria"><div className="metric-heading"><span>Pessoas na festa</span><i><Users size={18} /></i></div><strong>{entradas.length}</strong><small>{picoPortaria?.portaria ? `Pico: ${String(picoPortaria.hora).padStart(2, "0")}h · ${picoPortaria.portaria} pessoas` : "Aguardando contagem"}</small></div>
       </div>
@@ -1230,15 +1319,40 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
           </>
         )}
       </section>
+      <div className="dashboard-visual-grid">
+        <section className="dashboard-panel audience-panel">
+          <div className="panel-heading"><div><h3>Público da festa</h3><p>Perfil das {entradas.length} pessoas registradas</p></div></div>
+          {entradas.length === 0 ? <div className="hist-empty">Os perfis aparecerão após as primeiras entradas.</div> : <div className="audience-rings">
+            <div className="audience-group"><div className="audience-ring" style={{ background: `conic-gradient(var(--blue) 0 ${percentual(adultos)}%, #e8edf3 ${percentual(adultos)}% 100%)` }}><div><strong>{percentual(adultos)}%</strong><span>adultos</span></div></div><p>{adultos} adultos · {criancas} crianças</p></div>
+            <div className="audience-group"><div className="audience-ring" style={{ background: `conic-gradient(var(--green) 0 ${percentual(visitantes)}%, #e8edf3 ${percentual(visitantes)}% 100%)` }}><div><strong>{percentual(visitantes)}%</strong><span>visitantes</span></div></div><p>{visitantes} visitantes · {membros} membros</p></div>
+          </div>}
+        </section>
+        <section className="dashboard-panel stock-panel">
+          <div className="panel-heading"><div><h3>Situação do estoque</h3><p>Itens que precisam de atenção primeiro</p></div></div>
+          {produtosEstoque.length === 0 ? <div className="hist-empty">Nenhum produto cadastrado.</div> : <div className="stock-visual-list">{produtosEstoque.slice(0, 7).map((produto) => <div className="stock-visual-row" key={`${produto.barracaNome}-${produto.id}`}><div><strong>{produto.nome}</strong><span>{produto.barracaNome} · {produto.quantidade} un.</span></div><em className={`stock-status stock-${produto.status.classe}`}>{produto.status.label}</em></div>)}</div>}
+        </section>
+      </div>
+      <section className="dashboard-panel activity-panel">
+        <div className="panel-heading"><div><h3>Últimos movimentos</h3><p>Vendas e entradas em tempo real</p></div></div>
+        {movimentosRecentes.length === 0 ? <div className="hist-empty">Nenhum movimento registrado ainda.</div> : <div className="activity-timeline">{movimentosRecentes.map((movimento) => <div className={`activity-row activity-${movimento.tipo}`} key={movimento.id}><i>{movimento.tipo === "entrada" ? <Users size={14} /> : <Wallet size={14} />}</i><time>{new Date(movimento.hora).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time><div><strong>{movimento.titulo}</strong><span>{movimento.detalhe}</span></div></div>)}</div>}
+      </section>
       <div className="dashboard-columns">
         <section className="dashboard-panel">
           <div className="panel-heading"><div><h3>Desempenho por barraca</h3><p>{loading ? "Carregando dados…" : "Total de vendas registradas"}</p></div></div>
           {porBarraca.length === 0 ? <div className="hist-empty">Cadastre barracas para acompanhar o desempenho.</div> : (
             <div className="ranking-list">
-              {porBarraca.map((barraca) => <div className="ranking-row" key={barraca.id}>
-                <div className="ranking-info"><span>{barraca.nome}</span><small>{barraca.quantidade} vendas · {formatMoney(barraca.total)}</small></div>
-                <div className="ranking-track"><i style={{ width: `${(barraca.total / maiorTotal) * 100}%` }} /></div>
-              </div>)}
+              {porBarraca.map((barraca) => {
+                const aberta = barracaExpandida === barraca.id;
+                return <div className={`ranking-item ${aberta ? "open" : ""}`} key={barraca.id}>
+                  <button className="ranking-row" type="button" aria-expanded={aberta} onClick={() => setBarracaExpandida(aberta ? null : barraca.id)}>
+                    <div className="ranking-info"><span>{barraca.nome}</span><small>{barraca.quantidade} vendas · {formatMoney(barraca.total)}</small></div>
+                    <div className="ranking-bar-area"><div className="ranking-track"><i style={{ width: `${(barraca.total / maiorTotal) * 100}%` }} /></div>{aberta ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</div>
+                  </button>
+                  {aberta && <div className="ranking-products">
+                    {barraca.maisVendidos.length === 0 ? <span className="ranking-products-empty">Nenhum item vendido nesta barraca.</span> : barraca.maisVendidos.map((item, indice) => <div className="ranking-product-row" key={`${barraca.id}-${item.nome}`}><b>{indice + 1}</b><div><strong>{item.nome}</strong><span>{formatMoney(item.valor)}</span></div><em>{item.quantidade} un.</em></div>)}
+                  </div>}
+                </div>;
+              })}
             </div>
           )}
         </section>
@@ -1607,6 +1721,10 @@ export default function App() {
                 <p>Gerencie usuários e permissões</p>
               </div>
             </button>}
+            {podeAcessarPainel && <button className="menu-card mc-cran" onClick={() => setScreen("historico")}>
+              <div className="mc-icon"><Archive size={22} /></div>
+              <div className="mc-text"><h2>Histórico de eventos</h2><p>Arquive, resete ou restaure os dados</p></div>
+            </button>}
           </div>
         </div>
       )}
@@ -1649,6 +1767,7 @@ export default function App() {
       {screen === "acessos" && podeAcessarPainel && (
         <TelaAcessos barracas={barracas} setBarracas={setBarracas} usuarioAtualId={perfil?.id} onBack={() => setScreen("home")} />
       )}
+      {screen === "historico" && podeAcessarPainel && <TelaHistorico onBack={() => setScreen("home")} />}
       </main>
       <SiteFooter />
       <MobileNav screen={screen} onNavigate={setScreen} perfil={perfil} />

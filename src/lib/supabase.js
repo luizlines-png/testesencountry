@@ -53,6 +53,7 @@ const K_CAIXA = "festa-caixa-transacoes";
 const vendasKey = (id) => `festa-vendas-${id}`;
 const produtosKey = (id) => `festa-produtos-${id}`;
 const K_ENTRADAS = "festa-entradas";
+const K_HISTORICOS = "encountry-historicos";
 const cacheLeitura = new Map();
 
 function chaveBarraca(chave, prefixo) {
@@ -207,6 +208,58 @@ export async function excluirEntrada(id) {
 
 function localSet(chave, valor) {
   localStorage.setItem(chave, JSON.stringify(valor));
+}
+
+export async function listarHistoricos() {
+  if (!supabase) return localGet(K_HISTORICOS).sort((a, b) => b.criado_em.localeCompare(a.criado_em));
+  const { data, error } = await supabase
+    .from("historico_eventos")
+    .select("id, nome, criado_em, dados")
+    .order("criado_em", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function arquivarEResetarEvento(nome) {
+  if (!supabase) {
+    const barracas = localGet(K_BARRACAS);
+    const historico = {
+      id: crypto.randomUUID(), nome: nome.trim(), criado_em: new Date().toISOString(),
+      dados: {
+        barracas,
+        produtos: barracas.flatMap((b) => localGet(produtosKey(b.id)).map((p) => ({ ...p, barraca_id: b.id }))),
+        vendas: [
+          ...localGet(K_CAIXA).map((v) => ({ ...v, origem: "caixa" })),
+          ...barracas.flatMap((b) => localGet(vendasKey(b.id)).map((v) => ({ ...v, origem: "barraca", barraca_id: b.id }))),
+        ],
+        entradas: localGet(K_ENTRADAS),
+      },
+    };
+    localSet(K_HISTORICOS, [historico, ...localGet(K_HISTORICOS)]);
+    localSet(K_CAIXA, []);
+    localSet(K_ENTRADAS, []);
+    barracas.forEach((b) => { localSet(produtosKey(b.id), []); localSet(vendasKey(b.id), []); });
+    return historico.id;
+  }
+  const { data, error } = await supabase.rpc("arquivar_e_resetar_evento", { p_nome: nome.trim() });
+  if (error) throw error;
+  return data;
+}
+
+export async function restaurarEvento(historico) {
+  if (!supabase) {
+    const dados = historico.dados;
+    localSet(K_BARRACAS, dados.barracas || []);
+    localSet(K_CAIXA, (dados.vendas || []).filter((v) => v.origem === "caixa"));
+    localSet(K_ENTRADAS, dados.entradas || []);
+    (dados.barracas || []).forEach((b) => {
+      localSet(produtosKey(b.id), (dados.produtos || []).filter((p) => p.barraca_id === b.id));
+      localSet(vendasKey(b.id), (dados.vendas || []).filter((v) => v.origem === "barraca" && v.barraca_id === b.id));
+    });
+    return;
+  }
+  const { error } = await supabase.rpc("restaurar_evento", { p_historico_id: historico.id });
+  if (error) throw error;
 }
 
 function vendaRow(venda, origem, barracaId = null) {
