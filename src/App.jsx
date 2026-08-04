@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Store, Wallet, ClipboardList, Plus, Trash2, ArrowLeft, AlertCircle,
   Ticket, Package, PackageX, ShoppingCart, Minus, X, RefreshCw,
-  ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp, Download
+  ChevronDown, ChevronUp, LogIn, LogOut, Menu, Clock, TrendingUp, Download,
+  Users, UserRound, Baby, Undo2, Check
 } from "lucide-react";
 import {
   assinarAlteracoes, bancoCentralConfigurado, criarVenda, excluirBarraca as excluirBarracaRegistro, excluirProduto, excluirVenda, excluirVendaBarraca,
   gerenciarUsuarios, obterPerfil, registrarVendaBarraca, salvarBarraca as salvarBarracaRegistro, salvarProduto,
-  storageGet, supabase,
+  storageGet, supabase, listarEntradas, registrarEntrada, excluirEntrada,
 } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
 import { exportarRelatorioExcel } from "./lib/relatorioExcel";
@@ -48,7 +49,7 @@ function useSincronizacao(ativa) {
   useEffect(() => {
     if (!ativa) return undefined;
     return assinarAlteracoes(
-      ["barracas", "produtos", "vendas"],
+      ["barracas", "produtos", "vendas", "entradas"],
       () => setVersao((atual) => atual + 1),
       setStatus
     );
@@ -135,6 +136,7 @@ function Navbar({ screen, onNavigate, perfil, onLogout }) {
   const podeCaixa = !perfil || ["admin", "caixa"].includes(perfil.papel);
   const podeBarraca = !perfil || ["admin", "barraca"].includes(perfil.papel);
   const podePainel = !perfil || perfil.papel === "admin";
+  const podePortaria = !perfil || ["admin", "portaria"].includes(perfil.papel);
   const navegar = (destino) => { onNavigate(destino); setAberto(false); };
 
   return (
@@ -150,6 +152,7 @@ function Navbar({ screen, onNavigate, perfil, onLogout }) {
         <button className={screen === "home" ? "active" : ""} onClick={() => navegar("home")}>Início</button>
         {podeCaixa && <button className={screen === "caixa" ? "active" : ""} onClick={() => navegar("caixa")}>Caixa</button>}
         {podeBarraca && <button className={screen.startsWith("barraca") ? "active" : ""} onClick={() => navegar("barraca_select")}>Barracas</button>}
+        {podePortaria && <button className={screen === "portaria" ? "active" : ""} onClick={() => navegar("portaria")}>Portaria</button>}
         {podePainel && <button className={screen === "painel" ? "active" : ""} onClick={() => navegar("painel")}>Painel</button>}
         {podePainel && <button className={screen === "dashboard" ? "active" : ""} onClick={() => navegar("dashboard")}>Dashboard</button>}
         {podePainel && <button className={screen === "acessos" ? "active" : ""} onClick={() => navegar("acessos")}>Acessos</button>}
@@ -164,6 +167,7 @@ function MobileNav({ screen, onNavigate, perfil }) {
     ? [
       { key: "dashboard", label: "Resumo", icon: <ClipboardList size={19} /> },
       { key: "caixa", label: "Caixa", icon: <Wallet size={19} /> },
+      { key: "portaria", label: "Portaria", icon: <Users size={19} /> },
       { key: "barraca_select", label: "Barracas", icon: <Store size={19} /> },
       { key: "acessos", label: "Acessos", icon: <ClipboardList size={19} /> },
     ]
@@ -172,11 +176,134 @@ function MobileNav({ screen, onNavigate, perfil }) {
         { key: "home", label: "Início", icon: <Ticket size={19} /> },
         { key: "caixa", label: "Caixa", icon: <Wallet size={19} /> },
       ]
+      : perfil?.papel === "portaria"
+        ? [{ key: "portaria", label: "Portaria", icon: <Users size={19} /> }]
       : [
         { key: "home", label: "Início", icon: <Ticket size={19} /> },
         { key: "barraca_select", label: "Barraca", icon: <Store size={19} /> },
       ];
   return <nav className="mobile-bottom-nav">{itens.map((item) => <button key={item.key} className={screen === item.key || (item.key === "barraca_select" && screen === "barraca_vendas") ? "active" : ""} onClick={() => onNavigate(item.key)}>{item.icon}<span>{item.label}</span></button>)}</nav>;
+}
+
+/* ---------------- PORTARIA ---------------- */
+
+function TelaPortaria({ onBack, refreshSignal, online, perfil }) {
+  const [vinculo, setVinculo] = useState("visitante");
+  const [entradas, setEntradas] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [erro, setErro] = useState("");
+  const [confirmacao, setConfirmacao] = useState("");
+  const operacaoEmCurso = useRef(false);
+
+  const carregar = useCallback(async () => {
+    try {
+      setEntradas((await listarEntradas()) || []);
+    } catch (error) {
+      setErro(`Não foi possível atualizar a contagem: ${error.message}`);
+    }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar, refreshSignal]);
+  useEffect(() => {
+    const atualizar = () => carregar();
+    window.addEventListener("encountry-entradas", atualizar);
+    window.addEventListener("storage", atualizar);
+    return () => {
+      window.removeEventListener("encountry-entradas", atualizar);
+      window.removeEventListener("storage", atualizar);
+    };
+  }, [carregar]);
+  useEffect(() => {
+    if (!confirmacao) return undefined;
+    const timer = window.setTimeout(() => setConfirmacao(""), 1600);
+    return () => window.clearTimeout(timer);
+  }, [confirmacao]);
+
+  async function contar(faixa) {
+    if (operacaoEmCurso.current || !online) return;
+    operacaoEmCurso.current = true;
+    setSaving(true); setErro("");
+    const nova = {
+      id: uid(), faixa, vinculo, hora: Date.now(),
+      operadorId: perfil?.id || null,
+      operadorNome: perfil?.nome || perfil?.papel || "Operador",
+    };
+    try {
+      const salva = await registrarEntrada(nova);
+      setEntradas((atuais) => [...atuais, salva]);
+      setConfirmacao(`${faixa === "adulto" ? "Adulto" : "Criança"} · ${vinculo === "visitante" ? "Visitante" : "Membro"}`);
+    } catch (error) {
+      setErro(`A entrada não foi registrada: ${error.message}`);
+    } finally {
+      operacaoEmCurso.current = false;
+      setSaving(false);
+    }
+  }
+
+  async function desfazer() {
+    if (operacaoEmCurso.current || !online || !entradas.length) return;
+    const minhaUltima = [...entradas].reverse().find((item) =>
+      !supabase || !item.operadorId || item.operadorId === perfil?.id
+    );
+    if (!minhaUltima) { setErro("Você ainda não fez nenhum lançamento para desfazer."); return; }
+    operacaoEmCurso.current = true;
+    setSaving(true); setErro("");
+    try {
+      await excluirEntrada(minhaUltima.id);
+      setEntradas((atuais) => atuais.filter((item) => item.id !== minhaUltima.id));
+      setConfirmacao("Último lançamento desfeito");
+    } catch (error) {
+      setErro(`Não foi possível desfazer: ${error.message}`);
+    } finally {
+      operacaoEmCurso.current = false;
+      setSaving(false);
+    }
+  }
+
+  const contarPor = (faixa, tipoVinculo) => entradas.filter((item) =>
+    (!faixa || item.faixa === faixa) && (!tipoVinculo || item.vinculo === tipoVinculo)
+  ).length;
+  const ultimas = [...entradas].reverse().slice(0, 6);
+
+  return (
+    <div className="tela portaria-tela">
+      <TopBar title="Portaria" subtitle="Contagem de pessoas" onBack={onBack} icon={<Users size={20} />} />
+      <div className="entry-total" aria-live="polite">
+        <span>Pessoas na festa</span>
+        <strong>{entradas.length}</strong>
+        <small>{contarPor("adulto")} adultos · {contarPor("crianca")} crianças</small>
+      </div>
+
+      <SectionLabel>1. Quem está chegando?</SectionLabel>
+      <div className="entry-segment" role="group" aria-label="Tipo de pessoa">
+        <button className={vinculo === "visitante" ? "active" : ""} onClick={() => setVinculo("visitante")}><Users size={20} /> Visitante {vinculo === "visitante" && <Check size={17} />}</button>
+        <button className={vinculo === "membro" ? "active" : ""} onClick={() => setVinculo("membro")}><UserRound size={20} /> Membro {vinculo === "membro" && <Check size={17} />}</button>
+      </div>
+
+      <SectionLabel>2. Toque para contar</SectionLabel>
+      <div className="entry-actions">
+        <button className="entry-button entry-adult" disabled={saving || !online} onClick={() => contar("adulto")}><UserRound size={38} /><strong>Adulto</strong><span>+1 {vinculo}</span></button>
+        <button className="entry-button entry-child" disabled={saving || !online} onClick={() => contar("crianca")}><Baby size={38} /><strong>Criança</strong><span>+1 {vinculo}</span></button>
+      </div>
+      <button className="entry-undo" disabled={saving || !online || !entradas.length} onClick={desfazer}><Undo2 size={17} /> Desfazer meu último lançamento</button>
+      {confirmacao && <div className="entry-confirm"><Check size={18} /> {confirmacao}</div>}
+      {erro && <div className="err-msg"><AlertCircle size={14} /> {erro}</div>}
+
+      <SectionLabel>Resumo do público</SectionLabel>
+      <div className="entry-breakdown">
+        <div><span>Visitantes adultos</span><strong>{contarPor("adulto", "visitante")}</strong></div>
+        <div><span>Visitantes crianças</span><strong>{contarPor("crianca", "visitante")}</strong></div>
+        <div><span>Membros adultos</span><strong>{contarPor("adulto", "membro")}</strong></div>
+        <div><span>Membros crianças</span><strong>{contarPor("crianca", "membro")}</strong></div>
+      </div>
+
+      <SectionLabel>Últimos registros</SectionLabel>
+      <div className="entry-history">
+        {!ultimas.length && <div className="hist-empty">A contagem ainda não começou.</div>}
+        {ultimas.map((item) => <div key={item.id}><span className={`entry-dot ${item.faixa}`} /> <strong>{item.faixa === "adulto" ? "Adulto" : "Criança"}</strong><span>{item.vinculo === "visitante" ? "Visitante" : "Membro"}</span><small>{new Date(item.hora).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</small></div>)}
+      </div>
+    </div>
+  );
 }
 
 function SiteFooter() {
@@ -955,6 +1082,7 @@ function TelaPainel({ barracas, setBarracas, onBack, refreshSignal }) {
 function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   const [caixa, setCaixa] = useState([]);
   const [vendasBarracas, setVendasBarracas] = useState({});
+  const [entradas, setEntradas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exportando, setExportando] = useState(false);
   const [erroRelatorio, setErroRelatorio] = useState("");
@@ -962,9 +1090,11 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   const carregar = useCallback(async () => {
     setLoading(true);
     const caixaData = (await storageGet(K_CAIXA, true)) || [];
+    const entradasData = (await listarEntradas()) || [];
     const vendas = {};
     for (const barraca of barracas) vendas[barraca.id] = (await storageGet(vendasKey(barraca.id), true)) || [];
     setCaixa(caixaData);
+    setEntradas(entradasData);
     setVendasBarracas(vendas);
     setLoading(false);
   }, [barracas]);
@@ -975,7 +1105,7 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
     setExportando(true);
     setErroRelatorio("");
     try {
-      await exportarRelatorioExcel({ barracas, caixa, vendasBarracas });
+      await exportarRelatorioExcel({ barracas, caixa, vendasBarracas, entradas });
     } catch (error) {
       console.error("Não foi possível gerar o relatório.", error);
       setErroRelatorio("Não foi possível gerar o relatório Excel. Tente novamente.");
@@ -1010,9 +1140,9 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   ];
   const quantidadeDaVenda = (venda) =>
     venda.itens?.reduce((soma, item) => soma + (Number(item.quantidade) || 0), 0) || 1;
-  const horasComVenda = vendasComOrigem.map((venda) => new Date(venda.hora).getHours());
-  const horaInicial = horasComVenda.length ? Math.min(...horasComVenda) : 16;
-  const horaFinal = horasComVenda.length ? Math.max(...horasComVenda) : 23;
+  const horasComMovimento = [...vendasComOrigem, ...entradas].map((item) => new Date(item.hora).getHours());
+  const horaInicial = horasComMovimento.length ? Math.min(...horasComMovimento) : 16;
+  const horaFinal = horasComMovimento.length ? Math.max(...horasComMovimento) : 23;
   const horas = Array.from({ length: horaFinal - horaInicial + 1 }, (_, indice) => horaInicial + indice);
   const movimentoPorHora = horas.map((hora) => {
     const vendasDaHora = vendasComOrigem.filter((venda) => new Date(venda.hora).getHours() === hora);
@@ -1020,11 +1150,16 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
       hora,
       caixa: vendasDaHora.filter((venda) => venda.canal === "caixa").reduce((soma, venda) => soma + quantidadeDaVenda(venda), 0),
       barracas: vendasDaHora.filter((venda) => venda.canal === "barraca").reduce((soma, venda) => soma + quantidadeDaVenda(venda), 0),
+      portaria: entradas.filter((entrada) => new Date(entrada.hora).getHours() === hora).length,
     };
   });
-  const maiorMovimento = Math.max(...movimentoPorHora.map((item) => item.caixa + item.barracas), 1);
+  const maiorMovimento = Math.max(...movimentoPorHora.map((item) => item.caixa + item.barracas + item.portaria), 1);
   const pico = movimentoPorHora.reduce(
     (maior, atual) => atual.caixa + atual.barracas > maior.caixa + maior.barracas ? atual : maior,
+    movimentoPorHora[0]
+  );
+  const picoPortaria = movimentoPorHora.reduce(
+    (maior, atual) => atual.portaria > maior.portaria ? atual : maior,
     movimentoPorHora[0]
   );
   const produtosNoPico = pico
@@ -1060,23 +1195,25 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
         <div className="metric-card metric-blue"><div className="metric-heading"><span>Vendido no caixa</span><i><Wallet size={18} /></i></div><strong>{formatMoney(totalCaixa)}</strong><small>{caixa.length} registros</small></div>
         <div className="metric-card metric-green"><div className="metric-heading"><span>Vendido nas barracas</span><i><Store size={18} /></i></div><strong>{formatMoney(totalBarracas)}</strong><small>{porBarraca.reduce((s, b) => s + b.quantidade, 0)} registros</small></div>
         <div className="metric-card metric-gold"><div className="metric-heading"><span>Vendas registradas</span><i><ClipboardList size={18} /></i></div><strong>{totalVendas}</strong><small>Caixa e barracas</small></div>
+        <div className="metric-card metric-portaria"><div className="metric-heading"><span>Pessoas na festa</span><i><Users size={18} /></i></div><strong>{entradas.length}</strong><small>{picoPortaria?.portaria ? `Pico: ${String(picoPortaria.hora).padStart(2, "0")}h · ${picoPortaria.portaria} pessoas` : "Aguardando contagem"}</small></div>
       </div>
       <section className="dashboard-panel peak-panel">
         <div className="panel-heading peak-heading">
-          <div><h3>Horários de maior movimento</h3><p>Quantidade de produtos vendidos por hora no caixa e nas barracas</p></div>
+          <div><h3>Horários de maior movimento</h3><p>Vendas e pessoas que entraram por hora</p></div>
           {vendasComOrigem.length > 0 && <div className="peak-badge"><TrendingUp size={15} /><span>Pico: {String(pico.hora).padStart(2, "0")}h–{String((pico.hora + 1) % 24).padStart(2, "0")}h</span><strong>{pico.caixa + pico.barracas} itens</strong></div>}
         </div>
-        {vendasComOrigem.length === 0 ? <div className="hist-empty">Os horários de pico aparecerão após as primeiras vendas.</div> : (
+        {horasComMovimento.length === 0 ? <div className="hist-empty">Os horários de pico aparecerão após os primeiros registros.</div> : (
           <>
-            <div className="peak-legend" aria-hidden="true"><span><i className="legend-stall" /> Barracas</span><span><i className="legend-cash" /> Caixa</span></div>
+            <div className="peak-legend" aria-hidden="true"><span><i className="legend-stall" /> Barracas</span><span><i className="legend-cash" /> Caixa</span><span><i className="legend-entry" /> Portaria</span></div>
             <div className="hourly-chart" role="img" aria-label={`Gráfico de vendas por hora. Maior movimento entre ${pico.hora} e ${(pico.hora + 1) % 24} horas.`}>
               {movimentoPorHora.map((item) => {
-                const totalHora = item.caixa + item.barracas;
+                const totalHora = item.caixa + item.barracas + item.portaria;
                 return <div className={`hour-column ${item.hora === pico.hora ? "is-peak" : ""}`} key={item.hora}>
                   <span className="hour-total">{totalHora || ""}</span>
-                  <div className="hour-stack" title={`${String(item.hora).padStart(2, "0")}h: ${item.barracas} nas barracas e ${item.caixa} no caixa`}>
+                  <div className="hour-stack" title={`${String(item.hora).padStart(2, "0")}h: ${item.barracas} nas barracas, ${item.caixa} no caixa e ${item.portaria} entradas`}>
                     <i className="hour-bar hour-bar-stall" style={{ height: `${(item.barracas / maiorMovimento) * 100}%` }} />
                     <i className="hour-bar hour-bar-cash" style={{ height: `${(item.caixa / maiorMovimento) * 100}%` }} />
+                    <i className="hour-bar hour-bar-entry" style={{ height: `${(item.portaria / maiorMovimento) * 100}%` }} />
                   </div>
                   <span className="hour-label">{String(item.hora).padStart(2, "0")}h</span>
                 </div>;
@@ -1203,7 +1340,7 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
       setBarracas((atuais) => atuais.filter((barraca) => barraca.id !== id));
     } catch (error) { setErro(`A barraca não foi excluída: ${error.message}`); }
   }
-  const nomePerfil = (papel) => ({ admin: "Administrador", caixa: "Caixa", barraca: "Barraca" }[papel]);
+  const nomePerfil = (papel) => ({ admin: "Administrador", caixa: "Caixa", barraca: "Barraca", portaria: "Portaria" }[papel]);
 
   return (
     <div className="tela">
@@ -1240,7 +1377,7 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
             <label className="field-label">Nome</label><input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Nome da pessoa" />
             <label className="field-label">{supabase ? "E-mail" : "Usuário"}</label><input type={supabase ? "email" : "text"} value={form.usuario} onChange={(e) => setForm({ ...form, usuario: e.target.value })} placeholder={supabase ? "pessoa@email.com" : "Ex: joao"} required />
             <label className="field-label">{form.id ? "Nova senha (opcional)" : "Senha"}</label><input type="password" value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
-            <label className="field-label">Perfil de acesso</label><select value={form.papel} onChange={(e) => setForm({ ...form, papel: e.target.value, barraca_id: "" })}><option value="admin">Administrador</option><option value="caixa">Caixa</option><option value="barraca">Barraca</option></select>
+            <label className="field-label">Perfil de acesso</label><select value={form.papel} onChange={(e) => setForm({ ...form, papel: e.target.value, barraca_id: "" })}><option value="admin">Administrador</option><option value="caixa">Caixa</option><option value="portaria">Portaria</option><option value="barraca">Barraca</option></select>
             {form.papel === "barraca" && <><label className="field-label">Barraca vinculada</label><select required value={form.barraca_id} onChange={(e) => setForm({ ...form, barraca_id: e.target.value })}><option value="">Selecione uma barraca</option>{barracas.map((barraca) => <option key={barraca.id} value={barraca.id}>{barraca.nome}</option>)}</select></>}
             {erro && <div className="err-msg"><AlertCircle size={14} /> {erro}</div>}
             <button className="btn-primary" disabled={salvando} type="submit"><Plus size={16} /> {salvando ? "Salvando…" : form.id ? "Salvar alterações" : "Criar acesso"}</button>
@@ -1321,6 +1458,7 @@ export default function App() {
   const abrirModuloInicial = (perfilAtual) => {
     if (perfilAtual.papel === "admin") { setScreen("dashboard"); return; }
     if (perfilAtual.papel === "caixa") { setScreen("caixa"); return; }
+    if (perfilAtual.papel === "portaria") { setScreen("portaria"); return; }
     const barraca = barracas.find((item) => item.id === perfilAtual.barraca_id);
     if (barraca) { setBarracaAtiva(barraca); setScreen("barraca_vendas"); }
     else setScreen("barraca_select");
@@ -1400,6 +1538,7 @@ export default function App() {
   const podeAcessarCaixa = !perfil || ["admin", "caixa"].includes(perfil.papel);
   const podeAcessarBarraca = !perfil || ["admin", "barraca"].includes(perfil.papel);
   const podeAcessarPainel = !perfil || perfil.papel === "admin";
+  const podeAcessarPortaria = !perfil || ["admin", "portaria"].includes(perfil.papel);
   const barracasPermitidas = perfil?.papel === "barraca"
     ? (perfil.barraca_id ? barracas.filter((b) => b.id === perfil.barraca_id) : barracas)
     : barracas;
@@ -1442,6 +1581,10 @@ export default function App() {
                 <p>Acesso e vendas da barraca</p>
               </div>
             </button>}
+            {podeAcessarPortaria && <button className="menu-card mc-blue" onClick={() => setScreen("portaria")}>
+              <div className="mc-icon"><Users size={22} /></div>
+              <div className="mc-text"><h2>Portaria</h2><p>Conte adultos, crianças, visitantes e membros</p></div>
+            </button>}
 
             {podeAcessarPainel && <button className="menu-card mc-cran" onClick={() => setScreen("painel")}>
               <div className="mc-icon"><ClipboardList size={22} /></div>
@@ -1469,6 +1612,7 @@ export default function App() {
       )}
 
       {screen === "caixa" && <TelaCaixa onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} />}
+      {screen === "portaria" && podeAcessarPortaria && <TelaPortaria onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} perfil={perfil} />}
 
       {screen === "barraca_select" && (
         perfil?.papel === "barraca" ? (

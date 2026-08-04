@@ -5,13 +5,19 @@ const CHAVE_USUARIOS = "encountry-usuarios";
 const USUARIOS_INICIAIS = [
   { id: "admin-local", usuario: "admin", senha: "admin123", nome: "Administrador", papel: "admin" },
   { id: "caixa-local", usuario: "caixa", senha: "caixa123", nome: "Operador do Caixa", papel: "caixa" },
+  { id: "portaria-local", usuario: "portaria", senha: "portaria123", nome: "Operador da Portaria", papel: "portaria" },
   { id: "barraca-local", usuario: "barraca", senha: "barraca123", nome: "Operador de Barraca", papel: "barraca" },
 ];
 
 function obterUsuarios() {
   try {
     const usuarios = JSON.parse(localStorage.getItem(CHAVE_USUARIOS));
-    if (Array.isArray(usuarios) && usuarios.length) return usuarios;
+    if (Array.isArray(usuarios) && usuarios.length) {
+      const ids = new Set(usuarios.map((usuario) => usuario.id));
+      const atualizados = [...usuarios, ...USUARIOS_INICIAIS.filter((usuario) => !ids.has(usuario.id))];
+      if (atualizados.length !== usuarios.length) localStorage.setItem(CHAVE_USUARIOS, JSON.stringify(atualizados));
+      return atualizados;
+    }
   } catch {
     // A lista inicial será criada abaixo.
   }
@@ -96,5 +102,6 @@ export function removerUsuario(id) {
 export const credenciaisIniciais = [
   ["Administrador", "admin", "admin123"],
   ["Caixa", "caixa", "caixa123"],
+  ["Portaria", "portaria", "portaria123"],
   ["Barraca", "barraca", "barraca123"],
 ];

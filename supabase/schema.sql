@@ -1,7 +1,7 @@
 -- Encountry: banco central, perfis de acesso e dados operacionais.
 -- Execute este arquivo no SQL Editor do projeto Supabase.
 
-create type public.papel_usuario as enum ('admin', 'caixa', 'barraca');
+create type public.papel_usuario as enum ('admin', 'caixa', 'barraca', 'portaria');
 
 create table public.barracas (
   id text primary key,
@@ -43,6 +43,17 @@ create table public.vendas (
 );
 
 create index vendas_origem_hora_idx on public.vendas (origem, hora desc);
+create table public.entradas (
+  id text primary key,
+  faixa text not null check (faixa in ('adulto', 'crianca')),
+  vinculo text not null check (vinculo in ('visitante', 'membro')),
+  hora timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  operador_nome text,
+  created_at timestamptz not null default now()
+);
+
+create index entradas_hora_idx on public.entradas (hora desc);
 create index vendas_barraca_hora_idx on public.vendas (barraca_id, hora desc);
 create index produtos_barraca_idx on public.produtos (barraca_id);
 
@@ -60,6 +71,7 @@ alter table public.barracas enable row level security;
 alter table public.perfis enable row level security;
 alter table public.produtos enable row level security;
 alter table public.vendas enable row level security;
+alter table public.entradas enable row level security;
 
 create policy "usuários autenticados consultam barracas" on public.barracas for select to authenticated using (true);
 create policy "admin gerencia barracas" on public.barracas for all to authenticated using (public.meu_papel() = 'admin') with check (public.meu_papel() = 'admin');
@@ -85,11 +97,21 @@ create policy "caixa remove próprias vendas" on public.vendas for delete to aut
 create policy "caixa atualiza próprias vendas" on public.vendas for update to authenticated using (public.meu_papel() = 'caixa' and origem = 'caixa' and created_by = auth.uid()) with check (public.meu_papel() = 'caixa' and origem = 'caixa' and created_by = auth.uid());
 create policy "barraca gerencia próprias vendas" on public.vendas for all to authenticated using (public.meu_papel() = 'barraca' and origem = 'barraca' and barraca_id = public.minha_barraca()) with check (public.meu_papel() = 'barraca' and origem = 'barraca' and barraca_id = public.minha_barraca());
 
+create policy "admin e portaria consultam entradas" on public.entradas for select to authenticated using (public.meu_papel() in ('admin', 'portaria'));
+create policy "admin e portaria registram entradas" on public.entradas for insert to authenticated with check (public.meu_papel() in ('admin', 'portaria'));
+create policy "operador desfaz própria entrada" on public.entradas for delete to authenticated using (public.meu_papel() = 'admin' or created_by = auth.uid());
+
 create or replace function public.registrar_autor_da_venda()
 returns trigger language plpgsql security definer set search_path = public
 as $$ begin new.created_by = auth.uid(); return new; end; $$;
 
 create trigger vendas_autor before insert on public.vendas for each row execute function public.registrar_autor_da_venda();
+
+create or replace function public.registrar_autor_da_entrada()
+returns trigger language plpgsql security definer set search_path = public
+as $$ begin new.created_by = auth.uid(); return new; end; $$;
+
+create trigger entradas_autor before insert on public.entradas for each row execute function public.registrar_autor_da_entrada();
 
 
 -- Habilita a sincronização das telas entre os dispositivos do evento.
@@ -104,6 +126,9 @@ begin
     end if;
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'vendas') then
       alter publication supabase_realtime add table public.vendas;
+    end if;
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'entradas') then
+      alter publication supabase_realtime add table public.entradas;
     end if;
   end if;
 end;

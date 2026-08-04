@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 
-type Papel = "admin" | "caixa" | "barraca";
+type Papel = "admin" | "caixa" | "barraca" | "portaria";
 
 type UsuarioEntrada = {
   id?: string | null;
@@ -27,7 +27,7 @@ function validarUsuario(usuario: UsuarioEntrada, novo: boolean) {
 
   if (!nome || !email || !papel) throw new Error("Preencha nome, e-mail e perfil.");
   if (!email.includes("@")) throw new Error("Informe um e-mail válido.");
-  if (!["admin", "caixa", "barraca"].includes(papel)) throw new Error("Perfil de acesso inválido.");
+  if (!["admin", "caixa", "barraca", "portaria"].includes(papel)) throw new Error("Perfil de acesso inválido.");
   if (novo && senha.length < 6) throw new Error("A senha deve ter pelo menos 6 caracteres.");
   if (!novo && senha && senha.length < 6) throw new Error("A nova senha deve ter pelo menos 6 caracteres.");
   if (papel === "barraca" && !barracaId) throw new Error("Selecione a barraca do operador.");

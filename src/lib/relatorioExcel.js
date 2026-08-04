@@ -5,8 +5,16 @@ const COR_BRANCO = "FFFFFF";
 const COR_TEXTO = "1F2937";
 const COR_BORDA = "D9E2EC";
 
+function dataExcelLocal(valor) {
+  const data = new Date(valor);
+  return new Date(Date.UTC(
+    data.getFullYear(), data.getMonth(), data.getDate(),
+    data.getHours(), data.getMinutes(), data.getSeconds(), data.getMilliseconds()
+  ));
+}
+
 function dataVenda(venda) {
-  return new Date(venda.hora);
+  return dataExcelLocal(venda.hora);
 }
 
 function textoJson(valor) {
@@ -31,6 +39,7 @@ function estilizarCabecalho(linha) {
 function prepararAba(aba, titulo, descricao, colunas) {
   aba.views = [{ state: "frozen", ySplit: 4 }];
   aba.properties.showGridLines = false;
+  aba.columns = colunas;
   aba.mergeCells(1, 1, 1, colunas.length);
   const tituloCell = aba.getCell(1, 1);
   tituloCell.value = titulo;
@@ -46,7 +55,6 @@ function prepararAba(aba, titulo, descricao, colunas) {
   descricaoCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COR_AZUL_CLARO } };
   aba.getRow(2).height = 24;
 
-  aba.columns = colunas;
   const cabecalho = aba.getRow(4);
   cabecalho.values = colunas.map((coluna) => coluna.header);
   estilizarCabecalho(cabecalho);
@@ -87,7 +95,7 @@ function baixar(buffer, nome) {
   URL.revokeObjectURL(url);
 }
 
-export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
+export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas, entradas = [] }) {
   const modulo = await import("exceljs");
   const ExcelJS = modulo.default || modulo;
   const workbook = new ExcelJS.Workbook();
@@ -101,6 +109,7 @@ export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
     (vendasBarracas[barraca.id] || []).map((venda) => ({ ...venda, barraca }))
   ).sort((a, b) => a.hora - b.hora);
   const vendasDoCaixa = [...caixa].sort((a, b) => a.hora - b.hora);
+  const entradasDaPortaria = [...entradas].sort((a, b) => a.hora - b.hora);
 
   const abaBarracas = workbook.addWorksheet("Vendas Barracas");
   const colunasBarracas = [
@@ -131,7 +140,7 @@ export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
       valor: Number(venda.valor) || 0,
       origem: venda.origem || "barraca",
       operador: venda.created_by || "",
-      criadoEm: venda.created_at ? new Date(venda.created_at) : momento,
+      criadoEm: venda.created_at ? dataExcelLocal(venda.created_at) : momento,
       itensJson: textoJson(venda.itens),
     });
   });
@@ -164,7 +173,7 @@ export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
       quantidade: quantidadeItens(venda),
       origem: venda.origem || "caixa",
       operador: venda.created_by || "",
-      criadoEm: venda.created_at ? new Date(venda.created_at) : momento,
+      criadoEm: venda.created_at ? dataExcelLocal(venda.created_at) : momento,
       itensJson: textoJson(venda.itens),
     });
   });
@@ -200,6 +209,35 @@ export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
   });
   finalizarAba(abaItens, colunasItens.length);
 
+  const abaPortaria = workbook.addWorksheet("Portaria", { properties: { tabColor: { argb: "B24C32" } } });
+  const colunasPortaria = [
+    { header: "ID do registro", key: "id", width: 24 },
+    { header: "Data", key: "data", width: 13, style: { numFmt: "dd/mm/yyyy" } },
+    { header: "Hora", key: "hora", width: 11, style: { numFmt: "hh:mm:ss" } },
+    { header: "Vínculo", key: "vinculo", width: 16 },
+    { header: "Faixa", key: "faixa", width: 16 },
+    { header: "Operador", key: "operadorNome", width: 26 },
+    { header: "Operador (UUID)", key: "operadorId", width: 38 },
+    { header: "Horário agrupado", key: "faixaHorario", width: 20 },
+  ];
+  prepararAba(abaPortaria, "Registros da portaria", "Contagem individual de adultos e crianças, separada entre visitantes e membros.", colunasPortaria);
+  entradasDaPortaria.forEach((entrada) => {
+    const momentoOriginal = new Date(entrada.hora);
+    const momento = dataExcelLocal(entrada.hora);
+    const hora = momentoOriginal.getHours();
+    abaPortaria.addRow({
+      id: entrada.id,
+      data: momento,
+      hora: momento,
+      vinculo: entrada.vinculo === "visitante" ? "Visitante" : "Membro",
+      faixa: entrada.faixa === "adulto" ? "Adulto" : "Criança",
+      operadorNome: entrada.operadorNome || "",
+      operadorId: entrada.operadorId || "",
+      faixaHorario: `${String(hora).padStart(2, "0")}h–${String((hora + 1) % 24).padStart(2, "0")}h`,
+    });
+  });
+  finalizarAba(abaPortaria, colunasPortaria.length);
+
   const resumo = workbook.addWorksheet("Resumo", { properties: { tabColor: { argb: COR_DOURADO } } });
   resumo.properties.showGridLines = false;
   resumo.views = [{ state: "frozen", ySplit: 5 }];
@@ -207,7 +245,7 @@ export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
     { width: 30 }, { width: 20 }, { width: 20 }, { width: 20 },
   ];
   resumo.mergeCells("A1:D1");
-  resumo.getCell("A1").value = "Relatório de vendas — Encountry";
+  resumo.getCell("A1").value = "Relatório operacional — Encountry";
   resumo.getCell("A1").font = { bold: true, size: 20, color: { argb: COR_BRANCO } };
   resumo.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: COR_AZUL } };
   resumo.getCell("A1").alignment = { vertical: "middle" };
@@ -223,11 +261,32 @@ export async function criarRelatorioExcel({ barracas, caixa, vendasBarracas }) {
   ["B6", "C6", "D6"].forEach((endereco) => { resumo.getCell(endereco).numFmt = '"R$" #,##0.00'; });
   ["B5", "C5", "D5"].forEach((endereco) => { resumo.getCell(endereco).numFmt = "#,##0"; });
 
-  resumo.getRow(9).values = ["Barraca", "Quantidade de vendas", "Total vendido", "Ticket médio"];
+  const contagemPortaria = (faixa, vinculo) => entradasDaPortaria.filter((entrada) =>
+    entrada.faixa === faixa && entrada.vinculo === vinculo
+  ).length;
+  const entradasPorHora = entradasDaPortaria.reduce((totais, entrada) => {
+    const hora = new Date(entrada.hora).getHours();
+    totais[hora] = (totais[hora] || 0) + 1;
+    return totais;
+  }, {});
+  const [horaPico, totalPico] = Object.entries(entradasPorHora).reduce(
+    (pico, atual) => atual[1] > pico[1] ? atual : pico,
+    [null, 0]
+  );
+
+  resumo.getRow(9).values = ["Portaria", "Visitantes", "Membros", "Total"];
   estilizarCabecalho(resumo.getRow(9));
+  resumo.getRow(10).values = ["Adultos", contagemPortaria("adulto", "visitante"), contagemPortaria("adulto", "membro"), { formula: "B10+C10" }];
+  resumo.getRow(11).values = ["Crianças", contagemPortaria("crianca", "visitante"), contagemPortaria("crianca", "membro"), { formula: "B11+C11" }];
+  resumo.getRow(12).values = ["Total de pessoas", { formula: "B10+B11" }, { formula: "C10+C11" }, { formula: "D10+D11" }];
+  resumo.getRow(14).values = ["Pico da portaria", horaPico === null ? "Sem registros" : `${String(horaPico).padStart(2, "0")}h–${String((Number(horaPico) + 1) % 24).padStart(2, "0")}h`, "Pessoas no pico", totalPico];
+  ["B10", "C10", "D10", "B11", "C11", "D11", "B12", "C12", "D12", "D14"].forEach((endereco) => { resumo.getCell(endereco).numFmt = "#,##0"; });
+
+  resumo.getRow(17).values = ["Barraca", "Quantidade de vendas", "Total vendido", "Ticket médio"];
+  estilizarCabecalho(resumo.getRow(17));
   const ultimaVendaBarraca = Math.max(5, vendasDeBarracas.length + 4);
   barracas.forEach((barraca, indice) => {
-    const linha = 10 + indice;
+    const linha = 18 + indice;
     resumo.getRow(linha).values = [
       barraca.nome,
       { formula: `COUNTIF('Vendas Barracas'!C5:C${ultimaVendaBarraca},A${linha})` },

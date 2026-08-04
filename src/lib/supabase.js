@@ -52,6 +52,7 @@ const K_BARRACAS = "festa-barracas";
 const K_CAIXA = "festa-caixa-transacoes";
 const vendasKey = (id) => `festa-vendas-${id}`;
 const produtosKey = (id) => `festa-produtos-${id}`;
+const K_ENTRADAS = "festa-entradas";
 const cacheLeitura = new Map();
 
 function chaveBarraca(chave, prefixo) {
@@ -150,6 +151,58 @@ export function assinarAlteracoes(tabelas, onChange, onStatus) {
     } else if (status === "CLOSED") onStatus?.("offline");
   });
   return () => { supabase.removeChannel(canal); };
+}
+
+function paraEntrada(row) {
+  return {
+    id: row.id,
+    faixa: row.faixa,
+    vinculo: row.vinculo,
+    hora: new Date(row.hora).getTime(),
+    operadorId: row.created_by || null,
+    operadorNome: row.operador_nome || null,
+  };
+}
+
+export async function listarEntradas() {
+  if (!supabase) return localGet(K_ENTRADAS);
+  const { data, error } = await supabase
+    .from("entradas")
+    .select("*")
+    .order("hora");
+  if (error) throw error;
+  return data.map(paraEntrada);
+}
+
+export async function registrarEntrada(entrada) {
+  if (!supabase) {
+    localSet(K_ENTRADAS, [...localGet(K_ENTRADAS), entrada]);
+    window.dispatchEvent(new Event("encountry-entradas"));
+    return entrada;
+  }
+  const { data, error } = await supabase
+    .from("entradas")
+    .insert({
+      id: entrada.id,
+      faixa: entrada.faixa,
+      vinculo: entrada.vinculo,
+      hora: new Date(entrada.hora).toISOString(),
+      operador_nome: entrada.operadorNome || null,
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return paraEntrada(data);
+}
+
+export async function excluirEntrada(id) {
+  if (!supabase) {
+    localSet(K_ENTRADAS, localGet(K_ENTRADAS).filter((entrada) => entrada.id !== id));
+    window.dispatchEvent(new Event("encountry-entradas"));
+    return;
+  }
+  const { error } = await supabase.from("entradas").delete().eq("id", id);
+  if (error) throw error;
 }
 
 function localSet(chave, valor) {
@@ -291,4 +344,4 @@ export async function excluirVendaBarraca(barracaId, venda, produtos = []) {
   return { produto: data?.produto ? paraProduto(data.produto) : null };
 }
 
-export { K_BARRACAS, K_CAIXA, vendasKey, produtosKey };
+export { K_BARRACAS, K_CAIXA, K_ENTRADAS, vendasKey, produtosKey };
