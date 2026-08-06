@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { baixarUmaUnidade, devolverUmaUnidade, statusEstoque } from "./regras";
+import { baixarUmaUnidade, devolverUmaUnidade, podeAdicionarProdutos, podeVerTotalBarraca, statusEstoque } from "./regras";
 
 describe("regras de estoque da barraca", () => {
   it("baixa uma unidade e marca como esgotado ao vender a última", () => {
@@ -24,5 +24,16 @@ describe("regras de estoque da barraca", () => {
     expect(statusEstoque(10, false).classe).toBe("low");
     expect(statusEstoque(11, false).classe).toBe("normal");
     expect(statusEstoque(30, false).classe).toBe("high");
+  });
+
+  it("permite cadastrar produtos somente ao administrador", () => {
+    expect(podeAdicionarProdutos({ papel: "admin" })).toBe(true);
+    expect(podeAdicionarProdutos({ papel: "barraca" })).toBe(false);
+    expect(podeAdicionarProdutos({ papel: "caixa" })).toBe(false);
+  });
+
+  it("exibe o total da barraca somente ao administrador", () => {
+    expect(podeVerTotalBarraca({ papel: "admin" })).toBe(true);
+    expect(podeVerTotalBarraca({ papel: "barraca" })).toBe(false);
   });
 });

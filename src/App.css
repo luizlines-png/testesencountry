@@ -235,3 +235,97 @@
 .ranking-products-empty { padding: 8px 3px; color: var(--muted); font-size: 11px; }
 @media (min-width: 920px) { .dashboard-visual-grid { grid-template-columns: .9fr 1.1fr; } }
 @media (max-width: 480px) { .audience-rings { grid-template-columns: 1fr; }.audience-ring { width: 128px; height: 128px; }.audience-ring > div { width: 86px; height: 86px; } }
+
+/* Refinamentos de UX: legibilidade, acessibilidade e segurança de toque */
+.app-root { --muted: #5f6f83; }
+.app-root button, .app-root input, .app-root select { font-family: inherit; }
+.app-root button { -webkit-tap-highlight-color: transparent; }
+.app-root button:active:not(:disabled) { transform: translateY(1px); }
+.app-root :is(button, input, select, [tabindex]):focus-visible {
+  outline: 3px solid rgba(49, 101, 212, .32);
+  outline-offset: 2px;
+}
+.app-root button:disabled { cursor: not-allowed; opacity: .55; }
+.section-label, .total-label { font-size: 12px; line-height: 1.4; }
+.field-label, .panel-heading p, .metric-card small { font-size: 13px; line-height: 1.45; }
+.hist-item, .produto-meta, .barraca-pin, .hist-time, .cart-sub { font-size: 13px; }
+
+.err-msg {
+  width: 100%;
+  min-height: 42px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  color: #9b3033;
+  background: #fff1f1;
+  border: 1px solid #f0c7c9;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.success-inline { min-height: 44px; line-height: 1.4; }
+
+.hist-del {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  padding: 0;
+  color: #a33a3d;
+  background: #fff5f5;
+  border: 1px solid #f1d4d5;
+  border-radius: 6px;
+}
+.hist-del:hover { color: #fff; background: #a33a3d; border-color: #a33a3d; }
+.stock-btn, .cart-btn { width: 40px; height: 40px; flex: 0 0 40px; }
+.refresh-btn { width: 42px; height: 42px; }
+.produto-actions { gap: 8px; }
+.produto-row { padding-block: 11px; }
+.user-edit { min-height: 40px; padding-inline: 12px; font-size: 12px; }
+.custom-amount input, .item-input, .form-stack input, .form-stack select,
+.stall-create input, .reset-form input { min-height: 46px; font-size: 16px; }
+.product-btn { min-height: 108px; transition: border-color .15s ease, box-shadow .15s ease, transform .1s ease; }
+.product-btn:active:not(:disabled) { border-color: var(--blue); background: var(--blue-soft); transform: scale(.985); }
+.btn-danger:hover { background: #8d2f32; }
+
+.dashboard-quick-actions .btn-primary { min-height: 42px; }
+.dashboard-quick-actions .btn-secondary { min-height: 42px; padding-inline: 12px; font-size: 13px; }
+.dashboard-panel, .metric-card, .ticket { scroll-margin-top: 96px; }
+
+@media (max-width: 719px) {
+  .app-main { padding: 20px 16px 92px; }
+  .home-header { min-height: 215px; padding: 26px 20px; }
+  .brand-hero { width: 132px; }
+  .menu-list { margin-top: 18px; }
+  .menu-card { min-height: 104px; padding: 18px; }
+  .topbar { margin-bottom: 18px; }
+  .dashboard-quick-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .dashboard-quick-actions .btn-primary { grid-column: 1 / -1; }
+  .dashboard-quick-actions :is(.btn-primary, .btn-secondary) { width: 100%; }
+  .current-order-ticket { position: sticky; bottom: 76px; z-index: 20; box-shadow: 0 -8px 24px rgba(25,48,75,.14); }
+  .produto-row { align-items: flex-start; flex-direction: column; }
+  .produto-actions { width: 100%; justify-content: flex-end; padding-top: 9px; border-top: 1px solid var(--line); }
+  .entry-breakdown span { font-size: 13px; }
+  .user-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
+  .user-row .role-badge { grid-column: 3; grid-row: 1; }
+  .user-row .user-edit { grid-column: 2; grid-row: 2; width: 100%; }
+  .user-row > .hist-del { grid-column: 3; grid-row: 2; }
+  .stall-create { align-items: stretch; flex-direction: column; }
+  .stall-create .btn-primary { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .audience-rings { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .audience-ring { width: 112px; height: 112px; }
+  .audience-ring > div { width: 76px; height: 76px; }
+  .audience-ring strong { font-size: 20px; }
+  .audience-group p { font-size: 12px; line-height: 1.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-root *, .app-root *::before, .app-root *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

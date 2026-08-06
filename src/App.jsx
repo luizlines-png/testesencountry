@@ -6,14 +6,13 @@ import {
   Users, UserRound, Baby, Undo2, Check, Archive, RotateCcw
 } from "lucide-react";
 import {
-  assinarAlteracoes, bancoCentralConfigurado, criarVenda, excluirBarraca as excluirBarracaRegistro, excluirProduto, excluirVenda, excluirVendaBarraca,
+  assinarAlteracoes, atualizarProduto as atualizarProdutoRegistro, bancoCentralConfigurado, criarVenda, excluirBarraca as excluirBarracaRegistro, excluirProduto, excluirVenda, excluirVendaBarraca,
   gerenciarUsuarios, obterPerfil, registrarVendaBarraca, salvarBarraca as salvarBarracaRegistro, salvarProduto,
   storageGet, supabase, listarEntradas, registrarEntrada, excluirEntrada,
   listarHistoricos, arquivarEResetarEvento, restaurarEvento,
 } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
-import { exportarRelatorioExcel } from "./lib/relatorioExcel";
-import { statusEstoque } from "./lib/regras";
+import { podeAdicionarProdutos, podeVerTotalBarraca, statusEstoque } from "./lib/regras";
 import "./App.css";
 
 const NOTES = [2, 4, 6, 10, 20, 50];
@@ -101,7 +100,7 @@ function TopBar({ title, subtitle, onBack, icon }) {
   return (
     <div className="topbar">
       {onBack && (
-        <button className="back-btn" onClick={onBack}>
+        <button type="button" className="back-btn" onClick={onBack} aria-label="Voltar">
           <ArrowLeft size={18} />
         </button>
       )}
@@ -122,9 +121,9 @@ function SectionLabel({ children }) {
 }
 function Tabs({ tabs, active, onChange }) {
   return (
-    <div className="tabs">
+    <div className="tabs" role="tablist">
       {tabs.map((t) => (
-        <button key={t.key} className={`tab-btn ${active === t.key ? "active" : ""}`} onClick={() => onChange(t.key)}>
+        <button type="button" role="tab" aria-selected={active === t.key} key={t.key} className={`tab-btn ${active === t.key ? "active" : ""}`} onClick={() => onChange(t.key)}>
           {t.icon}{t.label}
         </button>
       ))}
@@ -639,7 +638,7 @@ function TelaCaixa({ onBack, refreshSignal, online }) {
           )}
 
           <SectionLabel>Pedido atual</SectionLabel>
-          <Ticket_ accent="pine">
+          <Ticket_ accent="pine" className="current-order-ticket">
             {cartItems.length === 0 ? (
               <div className="hist-empty">Nenhum item selecionado ainda.</div>
             ) : (
@@ -754,7 +753,7 @@ function ProdutoForm({ onAdd }) {
   );
 }
 
-function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
+function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicionar, podeVerTotal }) {
   const [tab, setTab] = useState("vender");
   const [vendas, setVendas] = useState([]);
   const [produtos, setProdutos] = useState([]);
@@ -819,7 +818,7 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
   async function atualizarProduto(produto) {
     setErroOperacao("");
     try {
-      const salvo = await salvarProduto(barraca.id, produto);
+      const salvo = await atualizarProdutoRegistro(barraca.id, produto);
       setProdutos((atuais) => atuais.map((p) => p.id === salvo.id ? salvo : p));
     } catch (error) { setErroOperacao(`O produto não foi atualizado: ${error.message}`); }
   }
@@ -834,6 +833,10 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
   }
 
   async function addProduto({ nome, preco, quantidade }) {
+    if (!podeAdicionar) {
+      setErroOperacao("Somente administradores podem cadastrar produtos.");
+      return;
+    }
     const novo = { id: uid(), nome, preco, quantidade, esgotado: quantidade <= 0 };
     setErroOperacao("");
     try {
@@ -873,12 +876,14 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
   return (
     <div className="tela">
       <TopBar title={barraca.nome} subtitle="Vendas da barraca" onBack={onBack} icon={<Store size={20} />} />
-      <Ticket_ accent="pine">
-        <div className="total-box">
-          <span className="total-label">Total vendido na barraca</span>
-          <span className="total-val">{loading ? "…" : formatMoney(total)}</span>
-        </div>
-      </Ticket_>
+      {podeVerTotal && (
+        <Ticket_ accent="pine">
+          <div className="total-box">
+            <span className="total-label">Total vendido na barraca</span>
+            <span className="total-val">{loading ? "…" : formatMoney(total)}</span>
+          </div>
+        </Ticket_>
+      )}
 
       <Tabs
         active={tab}
@@ -895,7 +900,11 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
           {loadingProdutos ? (
             <div className="hist-empty">Carregando produtos…</div>
           ) : produtos.length === 0 ? (
-            <div className="hist-empty">Nenhum produto cadastrado. Vá em "Produtos" para cadastrar.</div>
+            <div className="hist-empty">
+              {podeAdicionar
+                ? "Nenhum produto cadastrado. Vá em Produtos para cadastrar."
+                : "Nenhum produto cadastrado. Solicite o cadastro a um administrador."}
+            </div>
           ) : (
             <div className="product-grid">
               {produtos.map((p) => (
@@ -925,8 +934,12 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online }) {
 
       {tab === "produtos" && (
         <>
-          <SectionLabel>Cadastrar produto</SectionLabel>
-          <Ticket_ accent="pine"><ProdutoForm onAdd={addProduto} /></Ticket_>
+          {podeAdicionar && (
+            <>
+              <SectionLabel>Cadastrar produto</SectionLabel>
+              <Ticket_ accent="pine"><ProdutoForm onAdd={addProduto} /></Ticket_>
+            </>
+          )}
 
           <SectionLabel>Produtos cadastrados</SectionLabel>
           {produtos.length === 0 ? (
@@ -1165,6 +1178,7 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
     setExportando(true);
     setErroRelatorio("");
     try {
+      const { exportarRelatorioExcel } = await import("./lib/relatorioExcel");
       await exportarRelatorioExcel({ barracas, caixa, vendasBarracas, entradas });
     } catch (error) {
       console.error("Não foi possível gerar o relatório.", error);
@@ -1250,8 +1264,6 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
       }, {})
     ).sort((a, b) => b.quantidade - a.quantidade).slice(0, 5)
     : [];
-  const adultos = entradas.filter((entrada) => entrada.faixa === "adulto").length;
-  const criancas = entradas.length - adultos;
   const visitantes = entradas.filter((entrada) => entrada.vinculo === "visitante").length;
   const membros = entradas.length - visitantes;
   const percentual = (valor) => entradas.length ? Math.round((valor / entradas.length) * 100) : 0;
@@ -1323,8 +1335,8 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
         <section className="dashboard-panel audience-panel">
           <div className="panel-heading"><div><h3>Público da festa</h3><p>Perfil das {entradas.length} pessoas registradas</p></div></div>
           {entradas.length === 0 ? <div className="hist-empty">Os perfis aparecerão após as primeiras entradas.</div> : <div className="audience-rings">
-            <div className="audience-group"><div className="audience-ring" style={{ background: `conic-gradient(var(--blue) 0 ${percentual(adultos)}%, #e8edf3 ${percentual(adultos)}% 100%)` }}><div><strong>{percentual(adultos)}%</strong><span>adultos</span></div></div><p>{adultos} adultos · {criancas} crianças</p></div>
-            <div className="audience-group"><div className="audience-ring" style={{ background: `conic-gradient(var(--green) 0 ${percentual(visitantes)}%, #e8edf3 ${percentual(visitantes)}% 100%)` }}><div><strong>{percentual(visitantes)}%</strong><span>visitantes</span></div></div><p>{visitantes} visitantes · {membros} membros</p></div>
+            <div className="audience-group"><div className="audience-ring" style={{ background: `conic-gradient(var(--blue) 0 ${percentual(membros)}%, #e8edf3 ${percentual(membros)}% 100%)` }}><div><strong>{percentual(membros)}%</strong><span>membros</span></div></div><p>{membros} membros de {entradas.length} pessoas</p></div>
+            <div className="audience-group"><div className="audience-ring" style={{ background: `conic-gradient(var(--green) 0 ${percentual(visitantes)}%, #e8edf3 ${percentual(visitantes)}% 100%)` }}><div><strong>{percentual(visitantes)}%</strong><span>visitantes</span></div></div><p>{visitantes} visitantes de {entradas.length} pessoas</p></div>
           </div>}
         </section>
         <section className="dashboard-panel stock-panel">
@@ -1737,7 +1749,7 @@ export default function App() {
           (() => {
             const barracaVinculada = barracas.find((b) => b.id === perfil.barraca_id);
             return barracaVinculada ? (
-              <TelaBarracaVendas barraca={barracaVinculada} onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} />
+              <TelaBarracaVendas barraca={barracaVinculada} onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} podeAdicionar={podeAdicionarProdutos(perfil)} podeVerTotal={podeVerTotalBarraca(perfil)} />
             ) : (
               <div className="tela">
                 <TopBar title="Barraca" subtitle="Acesso do operador" onBack={() => setScreen("home")} icon={<Store size={20} />} />
@@ -1755,7 +1767,7 @@ export default function App() {
       )}
 
       {screen === "barraca_vendas" && barracaAtiva && (
-        <TelaBarracaVendas barraca={barracaAtiva} onBack={() => setScreen("barraca_select")} refreshSignal={sincronizacao.versao} online={podeOperar} />
+        <TelaBarracaVendas barraca={barracaAtiva} onBack={() => setScreen("barraca_select")} refreshSignal={sincronizacao.versao} online={podeOperar} podeAdicionar={podeAdicionarProdutos(perfil)} podeVerTotal={podeVerTotalBarraca(perfil)} />
       )}
 
       {screen === "painel" && (

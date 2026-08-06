@@ -70,6 +70,11 @@ uma venda feita em um deles aparece automaticamente no outro. Se o indicador de
 conexão mostrar reconexão por muito tempo, confira se o serviço Realtime está
 habilitado no projeto Supabase.
 
+Para habilitar ou corrigir **Histórico**, **Arquivar e resetar** e **Restaurar**
+em um banco online existente, execute também
+`supabase/migrations/2026080602_corrige_historico_online.sql`. O arquivo pode ser
+reaplicado com segurança e preserva os históricos já arquivados.
+
 ## Desenvolvimento
 
 ```bash

@@ -5,6 +5,14 @@ export function statusEstoque(quantidade, esgotado) {
   return { label: "Estoque normal", classe: "normal" };
 }
 
+export function podeAdicionarProdutos(perfil) {
+  return perfil?.papel === "admin";
+}
+
+export function podeVerTotalBarraca(perfil) {
+  return perfil?.papel === "admin";
+}
+
 export function baixarUmaUnidade(produto) {
   if (produto.esgotado || produto.quantidade <= 0) {
     throw new Error("Produto sem estoque disponível.");

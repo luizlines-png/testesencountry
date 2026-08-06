@@ -210,13 +210,24 @@ function localSet(chave, valor) {
   localStorage.setItem(chave, JSON.stringify(valor));
 }
 
+function erroHistorico(error) {
+  const mensagem = String(error?.message || "");
+  const bancoSemHistorico = ["PGRST202", "PGRST205", "42P01", "42883"].includes(error?.code)
+    || (/historico_eventos|arquivar_e_resetar_evento|restaurar_evento/i.test(mensagem)
+      && /does not exist|schema cache|could not find/i.test(mensagem));
+  if (bancoSemHistorico) {
+    return new Error("O histórico ainda não foi habilitado no banco online. Aplique a migração mais recente do Supabase.");
+  }
+  return error;
+}
+
 export async function listarHistoricos() {
   if (!supabase) return localGet(K_HISTORICOS).sort((a, b) => b.criado_em.localeCompare(a.criado_em));
   const { data, error } = await supabase
     .from("historico_eventos")
     .select("id, nome, criado_em, dados")
     .order("criado_em", { ascending: false });
-  if (error) throw error;
+  if (error) throw erroHistorico(error);
   return data;
 }
 
@@ -242,7 +253,7 @@ export async function arquivarEResetarEvento(nome) {
     return historico.id;
   }
   const { data, error } = await supabase.rpc("arquivar_e_resetar_evento", { p_nome: nome.trim() });
-  if (error) throw error;
+  if (error) throw erroHistorico(error);
   return data;
 }
 
@@ -259,7 +270,7 @@ export async function restaurarEvento(historico) {
     return;
   }
   const { error } = await supabase.rpc("restaurar_evento", { p_historico_id: historico.id });
-  if (error) throw error;
+  if (error) throw erroHistorico(error);
 }
 
 function vendaRow(venda, origem, barracaId = null) {
@@ -316,6 +327,28 @@ export async function salvarProduto(barracaId, produto) {
   const { data, error } = await supabase
     .from("produtos")
     .upsert({ ...produto, barraca_id: barracaId })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return paraProduto(data);
+}
+
+export async function atualizarProduto(barracaId, produto) {
+  const chave = produtosKey(barracaId);
+  if (!supabase) {
+    localSet(chave, localGet(chave).map((item) => item.id === produto.id ? produto : item));
+    return produto;
+  }
+  const { data, error } = await supabase
+    .from("produtos")
+    .update({
+      nome: produto.nome,
+      preco: produto.preco,
+      quantidade: produto.quantidade,
+      esgotado: produto.esgotado,
+    })
+    .eq("id", produto.id)
+    .eq("barraca_id", barracaId)
     .select("*")
     .single();
   if (error) throw error;
