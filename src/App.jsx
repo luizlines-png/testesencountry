@@ -12,7 +12,7 @@ import {
   listarHistoricos, arquivarEResetarEvento, restaurarEvento,
 } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
-import { podeAdicionarProdutos, podeVerTotalBarraca, statusEstoque } from "./lib/regras";
+import { podeAdicionarProdutos, podeVerTotalBarraca, resumoEstoqueProduto, statusEstoque } from "./lib/regras";
 import "./App.css";
 
 const NOTES = [2, 4, 6, 10, 20, 50];
@@ -816,6 +816,10 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
   }
 
   async function atualizarProduto(produto) {
+    if (!podeAdicionar) {
+      setErroOperacao("Somente administradores podem alterar produtos.");
+      return;
+    }
     setErroOperacao("");
     try {
       const salvo = await atualizarProdutoRegistro(barraca.id, produto);
@@ -846,6 +850,10 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
   }
 
   async function removeProduto(id) {
+    if (!podeAdicionar) {
+      setErroOperacao("Somente administradores podem excluir produtos.");
+      return;
+    }
     if (!window.confirm("Excluir este produto? O histórico de vendas será preservado.")) return;
     setErroOperacao("");
     try {
@@ -946,28 +954,44 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
             <div className="hist-empty">Nenhum produto cadastrado ainda.</div>
           ) : (
             <div className="produto-list">
-              {produtos.map((p) => (
-                <div key={p.id} className="produto-row">
-                  <div className="produto-info">
-                    <span className="produto-nome">{p.nome}</span>
-                    <span className="produto-meta">{formatMoney(p.preco)} · estoque: {p.quantidade}</span>
+              {produtos.map((p) => {
+                const estoque = resumoEstoqueProduto(p, vendas);
+                return (
+                  <div key={p.id} className="produto-row">
+                    <div className="produto-info">
+                      <span className="produto-nome">{p.nome}</span>
+                      <span className="produto-meta">{formatMoney(p.preco)}</span>
+                      <div className="produto-estoque-resumo">
+                        <span>Total cadastrado: <strong>{estoque.cadastrado} un.</strong></span>
+                        <span className={estoque.restante <= 10 ? "estoque-restante baixo" : "estoque-restante"}>
+                          Restam: <strong>{estoque.restante} un.</strong>
+                        </span>
+                      </div>
+                    </div>
+                    {podeAdicionar ? (
+                      <div className="produto-actions">
+                        <button className="stock-btn" onClick={() => ajustarEstoque(p, -1)} title="Diminuir estoque"><Minus size={13} /></button>
+                        <button className="stock-btn" onClick={() => ajustarEstoque(p, 1)} title="Aumentar estoque"><Plus size={13} /></button>
+                        <button
+                          className={`esgotado-btn ${p.esgotado ? "is-esgotado" : ""}`}
+                          onClick={() => toggleEsgotado(p)}
+                        >
+                          {p.esgotado ? <PackageX size={13} /> : <Package size={13} />}
+                          {p.esgotado ? "Esgotado" : "Disponível"}
+                        </button>
+                        <button className="hist-del" onClick={() => removeProduto(p.id)} title="Excluir produto">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className={`produto-status-view ${p.esgotado || estoque.restante <= 0 ? "is-esgotado" : ""}`}>
+                        {p.esgotado || estoque.restante <= 0 ? <PackageX size={13} /> : <Package size={13} />}
+                        {p.esgotado || estoque.restante <= 0 ? "Esgotado" : "Disponível"}
+                      </span>
+                    )}
                   </div>
-                  <div className="produto-actions">
-                    <button className="stock-btn" onClick={() => ajustarEstoque(p, -1)} title="Diminuir estoque"><Minus size={13} /></button>
-                    <button className="stock-btn" onClick={() => ajustarEstoque(p, 1)} title="Aumentar estoque"><Plus size={13} /></button>
-                    <button
-                      className={`esgotado-btn ${p.esgotado ? "is-esgotado" : ""}`}
-                      onClick={() => toggleEsgotado(p)}
-                    >
-                      {p.esgotado ? <PackageX size={13} /> : <Package size={13} />}
-                      {p.esgotado ? "Esgotado" : "Disponível"}
-                    </button>
-                    <button className="hist-del" onClick={() => removeProduto(p.id)} title="Excluir produto">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>

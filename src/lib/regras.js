@@ -13,6 +13,16 @@ export function podeVerTotalBarraca(perfil) {
   return perfil?.papel === "admin";
 }
 
+export function resumoEstoqueProduto(produto, vendas = []) {
+  const restante = Math.max(0, Number(produto?.quantidade) || 0);
+  const vendidos = vendas.reduce((total, venda) => {
+    const itensDoProduto = (venda.itens || []).filter((item) => item.produtoId === produto?.id);
+    return total + itensDoProduto.reduce((soma, item) => soma + (Number(item.quantidade) || 0), 0);
+  }, 0);
+
+  return { cadastrado: restante + vendidos, restante };
+}
+
 export function baixarUmaUnidade(produto) {
   if (produto.esgotado || produto.quantidade <= 0) {
     throw new Error("Produto sem estoque disponível.");

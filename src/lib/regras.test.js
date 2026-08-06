@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { baixarUmaUnidade, devolverUmaUnidade, podeAdicionarProdutos, podeVerTotalBarraca, statusEstoque } from "./regras";
+import { baixarUmaUnidade, devolverUmaUnidade, podeAdicionarProdutos, podeVerTotalBarraca, resumoEstoqueProduto, statusEstoque } from "./regras";
 
 describe("regras de estoque da barraca", () => {
   it("baixa uma unidade e marca como esgotado ao vender a última", () => {
@@ -30,6 +30,17 @@ describe("regras de estoque da barraca", () => {
     expect(podeAdicionarProdutos({ papel: "admin" })).toBe(true);
     expect(podeAdicionarProdutos({ papel: "barraca" })).toBe(false);
     expect(podeAdicionarProdutos({ papel: "caixa" })).toBe(false);
+  });
+
+  it("calcula o total cadastrado e o saldo restante de um produto", () => {
+    const produto = { id: "p1", quantidade: 7 };
+    const vendas = [
+      { itens: [{ produtoId: "p1", quantidade: 2 }] },
+      { itens: [{ produtoId: "p2", quantidade: 4 }] },
+      { itens: [{ produtoId: "p1", quantidade: 1 }] },
+    ];
+
+    expect(resumoEstoqueProduto(produto, vendas)).toEqual({ cadastrado: 10, restante: 7 });
   });
 
   it("exibe o total da barraca somente ao administrador", () => {
