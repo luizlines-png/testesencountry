@@ -1,30 +1,24 @@
--- Arquiva o estado completo do evento antes de limpar os dados operacionais.
-create table if not exists public.historico_eventos (
-  id uuid primary key default gen_random_uuid(),
-  nome text not null,
-  dados jsonb not null,
-  criado_por uuid references auth.users(id) on delete set null,
-  criado_em timestamptz not null default now()
-);
-
-alter table public.historico_eventos enable row level security;
-
-create policy "admin consulta historico" on public.historico_eventos
-  for select to authenticated using (public.meu_papel() = 'admin');
+-- Compatibilidade com a extensão safeupdate habilitada no banco hospedado.
+-- A cláusula WHERE explícita mantém a limpeza intencional e permite que as
+-- funções administrativas sejam executadas sem desabilitar a proteção global.
 
 create or replace function public.arquivar_e_resetar_evento(p_nome text)
 returns uuid
-language plpgsql security definer set search_path = public
+language plpgsql
+security definer
+set search_path = public, pg_temp
 as $$
 declare
   v_id uuid;
 begin
-  if public.meu_papel() <> 'admin' then
+  if public.meu_papel() is distinct from 'admin'::public.papel_usuario then
     raise exception 'Somente administradores podem resetar o evento.';
   end if;
   if nullif(trim(p_nome), '') is null then
     raise exception 'Informe um nome para o histórico.';
   end if;
+
+  perform pg_advisory_xact_lock(hashtext('encountry-historico-evento'));
 
   insert into public.historico_eventos (nome, dados, criado_por)
   values (
@@ -41,23 +35,33 @@ begin
   delete from public.entradas where true;
   delete from public.vendas where true;
   delete from public.produtos where true;
+
   return v_id;
 end;
 $$;
 
 create or replace function public.restaurar_evento(p_historico_id uuid)
 returns void
-language plpgsql security definer set search_path = public
+language plpgsql
+security definer
+set search_path = public, pg_temp
 as $$
 declare
   v_dados jsonb;
 begin
-  if public.meu_papel() <> 'admin' then
+  if public.meu_papel() is distinct from 'admin'::public.papel_usuario then
     raise exception 'Somente administradores podem restaurar o evento.';
   end if;
 
-  select dados into v_dados from public.historico_eventos where id = p_historico_id;
-  if v_dados is null then raise exception 'Histórico não encontrado.'; end if;
+  perform pg_advisory_xact_lock(hashtext('encountry-historico-evento'));
+
+  select dados into v_dados
+  from public.historico_eventos
+  where id = p_historico_id;
+
+  if v_dados is null then
+    raise exception 'Histórico não encontrado.';
+  end if;
 
   delete from public.entradas where true;
   delete from public.vendas where true;
@@ -82,5 +86,9 @@ begin
 end;
 $$;
 
+revoke all on function public.arquivar_e_resetar_evento(text) from public, anon;
+revoke all on function public.restaurar_evento(uuid) from public, anon;
 grant execute on function public.arquivar_e_resetar_evento(text) to authenticated;
 grant execute on function public.restaurar_evento(uuid) to authenticated;
+
+notify pgrst, 'reload schema';

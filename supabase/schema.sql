@@ -149,9 +149,9 @@ begin
       'entradas', coalesce((select jsonb_agg(to_jsonb(e)) from public.entradas e), '[]'::jsonb)
     ), auth.uid()
   ) returning id into v_id;
-  delete from public.entradas;
-  delete from public.vendas;
-  delete from public.produtos;
+  delete from public.entradas where true;
+  delete from public.vendas where true;
+  delete from public.produtos where true;
   return v_id;
 end;
 $$;
@@ -167,9 +167,9 @@ begin
   perform pg_advisory_xact_lock(hashtext('encountry-historico-evento'));
   select dados into v_dados from public.historico_eventos where id = p_historico_id;
   if v_dados is null then raise exception 'Histórico não encontrado.'; end if;
-  delete from public.entradas;
-  delete from public.vendas;
-  delete from public.produtos;
+  delete from public.entradas where true;
+  delete from public.vendas where true;
+  delete from public.produtos where true;
   insert into public.barracas (id, nome, created_at)
     select id, nome, created_at from jsonb_populate_recordset(null::public.barracas, v_dados->'barracas')
     on conflict (id) do update set nome = excluded.nome;

@@ -49,9 +49,9 @@ begin
     auth.uid()
   ) returning id into v_id;
 
-  delete from public.entradas;
-  delete from public.vendas;
-  delete from public.produtos;
+  delete from public.entradas where true;
+  delete from public.vendas where true;
+  delete from public.produtos where true;
 
   return v_id;
 end;
@@ -80,9 +80,9 @@ begin
     raise exception 'Histórico não encontrado.';
   end if;
 
-  delete from public.entradas;
-  delete from public.vendas;
-  delete from public.produtos;
+  delete from public.entradas where true;
+  delete from public.vendas where true;
+  delete from public.produtos where true;
 
   insert into public.barracas (id, nome, created_at)
   select id, nome, created_at
