@@ -60,10 +60,11 @@ ao navegador ou à Vercel.
 ### Atualizar um banco já existente
 
 Para uma instalação que já executou o esquema anteriormente, rode no SQL Editor
-o arquivo mais recente da pasta `supabase/migrations`. A migração torna a venda
-da barraca transacional e restringe a leitura de produtos e vendas ao perfil do
-usuário. Ela também habilita a sincronização em tempo real de barracas, produtos
-e vendas. Vendas feitas no caixa continuam sem alterar o estoque.
+as migrações ainda não aplicadas da pasta `supabase/migrations`, respeitando a
+ordem dos nomes. A migração mais recente mantém os produtos em modo somente
+leitura para operadores de barraca. As migrações anteriores tornam a venda da
+barraca transacional, restringem os dados por perfil e habilitam a sincronização
+em tempo real. Vendas feitas no caixa continuam sem alterar o estoque.
 
 Depois de executar a migração, abra o sistema em dois navegadores e confirme que
 uma venda feita em um deles aparece automaticamente no outro. Se o indicador de

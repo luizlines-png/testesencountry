@@ -84,8 +84,6 @@ create policy "produtos visíveis conforme perfil" on public.produtos for select
   or (public.meu_papel() = 'barraca' and barraca_id = public.minha_barraca())
 );
 create policy "admin gerencia produtos" on public.produtos for all to authenticated using (public.meu_papel() = 'admin') with check (public.meu_papel() = 'admin');
-create policy "barraca atualiza próprios produtos" on public.produtos for update to authenticated using (public.meu_papel() = 'barraca' and barraca_id = public.minha_barraca()) with check (public.meu_papel() = 'barraca' and barraca_id = public.minha_barraca());
-create policy "barraca exclui próprios produtos" on public.produtos for delete to authenticated using (public.meu_papel() = 'barraca' and barraca_id = public.minha_barraca());
 
 create policy "vendas visíveis conforme perfil" on public.vendas for select to authenticated using (
   public.meu_papel() = 'admin'

@@ -54,7 +54,6 @@ const vendasKey = (id) => `festa-vendas-${id}`;
 const produtosKey = (id) => `festa-produtos-${id}`;
 const K_ENTRADAS = "festa-entradas";
 const K_HISTORICOS = "encountry-historicos";
-const cacheLeitura = new Map();
 
 function chaveBarraca(chave, prefixo) {
   return chave.startsWith(prefixo) ? chave.slice(prefixo.length) : null;
@@ -112,18 +111,9 @@ async function obterCentral(chave) {
 }
 
 export async function storageGet(chave) {
-  try {
-    if (supabase) {
-      const valor = await obterCentral(chave);
-      cacheLeitura.set(chave, valor);
-      return valor;
-    }
-    const valor = localStorage.getItem(chave);
-    return valor ? JSON.parse(valor) : null;
-  } catch (error) {
-    console.error("Não foi possível carregar os dados.", error);
-    return cacheLeitura.get(chave) ?? null;
-  }
+  if (supabase) return obterCentral(chave);
+  const valor = localStorage.getItem(chave);
+  return valor ? JSON.parse(valor) : null;
 }
 
 function localGet(chave) {

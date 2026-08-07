@@ -13,12 +13,16 @@ import {
 } from "./lib/supabase";
 import { credenciaisIniciais, entrarLocal, listarUsuarios, obterSessaoLocal, removerUsuario, sairLocal, salvarUsuario } from "./lib/authLocal";
 import { podeAdicionarProdutos, podeVerTotalBarraca, resumoEstoqueProduto, statusEstoque } from "./lib/regras";
+import { iniciarUltimaRequisicao } from "./lib/requisicoes";
 import "./App.css";
 
 const NOTES = [2, 4, 6, 10, 20, 50];
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function adicionarSemDuplicar(atuais, novo) {
+  return atuais.some((item) => item.id === novo.id) ? atuais : [...atuais, novo];
 }
 function formatMoney(v) {
   return `R$ ${v.toFixed(2).replace(".", ",")}`;
@@ -192,17 +196,27 @@ function TelaPortaria({ onBack, refreshSignal, online, perfil }) {
   const [vinculo, setVinculo] = useState("visitante");
   const [entradas, setEntradas] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [confirmacao, setConfirmacao] = useState("");
   const operacaoEmCurso = useRef(false);
+  const iniciarRequisicao = useUltimaRequisicao();
 
   const carregar = useCallback(async () => {
+    const aindaAtual = iniciarRequisicao();
+    setCarregando(true);
     try {
-      setEntradas((await listarEntradas()) || []);
+      const dados = (await listarEntradas()) || [];
+      if (!aindaAtual()) return;
+      setEntradas(dados);
+      setErro("");
     } catch (error) {
+      if (!aindaAtual()) return;
       setErro(`Não foi possível atualizar a contagem: ${error.message}`);
+    } finally {
+      if (aindaAtual()) setCarregando(false);
     }
-  }, []);
+  }, [iniciarRequisicao]);
 
   useEffect(() => { carregar(); }, [carregar, refreshSignal]);
   useEffect(() => {
@@ -231,7 +245,7 @@ function TelaPortaria({ onBack, refreshSignal, online, perfil }) {
     };
     try {
       const salva = await registrarEntrada(nova);
-      setEntradas((atuais) => [...atuais, salva]);
+      setEntradas((atuais) => adicionarSemDuplicar(atuais, salva));
       setConfirmacao(`${faixa === "adulto" ? "Adulto" : "Criança"} · ${vinculo === "visitante" ? "Visitante" : "Membro"}`);
     } catch (error) {
       setErro(`A entrada não foi registrada: ${error.message}`);
@@ -271,7 +285,7 @@ function TelaPortaria({ onBack, refreshSignal, online, perfil }) {
       <TopBar title="Portaria" subtitle="Contagem de pessoas" onBack={onBack} icon={<Users size={20} />} />
       <div className="entry-total" aria-live="polite">
         <span>Pessoas na festa</span>
-        <strong>{entradas.length}</strong>
+        <strong>{carregando ? "…" : entradas.length}</strong>
         <small>{contarPor("adulto")} adultos · {contarPor("crianca")} crianças</small>
       </div>
 
@@ -409,6 +423,8 @@ function TelaCaixa({ onBack, refreshSignal, online }) {
   const [erroOperacao, setErroOperacao] = useState("");
   const [sucessoOperacao, setSucessoOperacao] = useState("");
   const operacaoEmCurso = useRef(false);
+  const iniciarRequisicaoCaixa = useUltimaRequisicao();
+  const iniciarRequisicaoProdutos = useUltimaRequisicao();
   useEffect(() => {
     if (!sucessoOperacao) return undefined;
     const timer = window.setTimeout(() => setSucessoOperacao(""), 3000);
@@ -416,24 +432,41 @@ function TelaCaixa({ onBack, refreshSignal, online }) {
   }, [sucessoOperacao]);
 
   useEffect(() => {
+    const aindaAtual = iniciarRequisicaoCaixa();
+    setLoading(true);
+    setErroOperacao("");
     (async () => {
-      const data = await storageGet(K_CAIXA, true);
-      setTransacoes(data || []);
-      setLoading(false);
+      try {
+        const data = await storageGet(K_CAIXA);
+        if (!aindaAtual()) return;
+        setTransacoes(data || []);
+      } catch (error) {
+        if (aindaAtual()) setErroOperacao(`Não foi possível carregar as vendas do caixa: ${error.message}`);
+      } finally {
+        if (aindaAtual()) setLoading(false);
+      }
     })();
-  }, [refreshSignal]);
+  }, [iniciarRequisicaoCaixa, refreshSignal]);
 
   const carregarProdutos = useCallback(async () => {
+    const aindaAtual = iniciarRequisicaoProdutos();
     setLoadingProdutos(true);
-    const bs = (await storageGet(K_BARRACAS, true)) || [];
-    setBarracas(bs);
-    const mapa = {};
-    for (const b of bs) {
-      mapa[b.id] = (await storageGet(produtosKey(b.id), true)) || [];
+    setErroOperacao("");
+    try {
+      const bs = (await storageGet(K_BARRACAS)) || [];
+      const resultados = await Promise.all(bs.map(async (b) => [
+        b.id,
+        (await storageGet(produtosKey(b.id))) || [],
+      ]));
+      if (!aindaAtual()) return;
+      setBarracas(bs);
+      setProdutosPorBarraca(Object.fromEntries(resultados));
+    } catch (error) {
+      if (aindaAtual()) setErroOperacao(`Não foi possível carregar as barracas e produtos: ${error.message}`);
+    } finally {
+      if (aindaAtual()) setLoadingProdutos(false);
     }
-    setProdutosPorBarraca(mapa);
-    setLoadingProdutos(false);
-  }, []);
+  }, [iniciarRequisicaoProdutos]);
 
   useEffect(() => { carregarProdutos(); }, [carregarProdutos, refreshSignal]);
 
@@ -454,7 +487,7 @@ function TelaCaixa({ onBack, refreshSignal, online }) {
     setErroOperacao("");
     try {
       const salva = await criarVenda(K_CAIXA, nova);
-      setTransacoes((atuais) => [...atuais, salva]);
+      setTransacoes((atuais) => adicionarSemDuplicar(atuais, salva));
       setSucessoOperacao("Venda registrada com sucesso.");
       return true;
     } catch (error) {
@@ -689,7 +722,7 @@ function TelaCaixa({ onBack, refreshSignal, online }) {
 
 /* ---------------- BARRACA ---------------- */
 
-function TelaBarracaSelect({ barracas, onEnter, onBack }) {
+function TelaBarracaSelect({ barracas, carregando, erroCarregamento, onRetry, onEnter, onBack }) {
   const [sel, setSel] = useState("");
   const [err, setErr] = useState("");
 
@@ -702,7 +735,11 @@ function TelaBarracaSelect({ barracas, onEnter, onBack }) {
   return (
     <div className="tela">
       <TopBar title="Barracas" subtitle="Selecionar barraca para operação" onBack={onBack} icon={<Store size={20} />} />
-      {barracas.length === 0 ? (
+      {carregando ? (
+        <div className="hist-empty">Carregando barracas…</div>
+      ) : erroCarregamento ? (
+        <div className="err-msg"><AlertCircle size={14} /> {erroCarregamento} <button type="button" className="btn-secondary" onClick={onRetry}>Tentar novamente</button></div>
+      ) : barracas.length === 0 ? (
         <div className="hist-empty">Nenhuma barraca cadastrada ainda. Peça a um administrador para cadastrar em Acessos.</div>
       ) : (
         <Ticket_ accent="pine">
@@ -764,6 +801,7 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
   const [erroOperacao, setErroOperacao] = useState("");
   const [sucessoOperacao, setSucessoOperacao] = useState("");
   const operacaoEmCurso = useRef(false);
+  const iniciarRequisicao = useUltimaRequisicao();
   useEffect(() => {
     if (!sucessoOperacao) return undefined;
     const timer = window.setTimeout(() => setSucessoOperacao(""), 3000);
@@ -771,15 +809,29 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
   }, [sucessoOperacao]);
 
   useEffect(() => {
+    const aindaAtual = iniciarRequisicao();
+    setLoading(true);
+    setLoadingProdutos(true);
+    setErroOperacao("");
     (async () => {
-      const data = await storageGet(vendasKey(barraca.id), true);
-      setVendas(data || []);
-      setLoading(false);
-      const p = await storageGet(produtosKey(barraca.id), true);
-      setProdutos(p || []);
-      setLoadingProdutos(false);
+      try {
+        const [data, produtosData] = await Promise.all([
+          storageGet(vendasKey(barraca.id)),
+          storageGet(produtosKey(barraca.id)),
+        ]);
+        if (!aindaAtual()) return;
+        setVendas(data || []);
+        setProdutos(produtosData || []);
+      } catch (error) {
+        if (aindaAtual()) setErroOperacao(`Não foi possível carregar os dados da barraca: ${error.message}`);
+      } finally {
+        if (aindaAtual()) {
+          setLoading(false);
+          setLoadingProdutos(false);
+        }
+      }
     })();
-  }, [barraca.id, refreshSignal]);
+  }, [barraca.id, iniciarRequisicao, refreshSignal]);
 
   async function registrarVendaAvulsa(valor) {
     if (operacaoEmCurso.current || !online) {
@@ -791,7 +843,7 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
     setSaving(true); setErroOperacao("");
     try {
       const salva = await criarVenda(vendasKey(barraca.id), novo);
-      setVendas((atuais) => [...atuais, salva]);
+      setVendas((atuais) => adicionarSemDuplicar(atuais, salva));
       setItemAvulso("");
       setSucessoOperacao("Venda avulsa registrada com sucesso.");
     } catch (error) { setErroOperacao(`A venda não foi registrada: ${error.message}`); }
@@ -809,7 +861,7 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
     try {
       const resultado = await registrarVendaBarraca(barraca.id, produto, novaVenda);
       setProdutos((atuais) => atuais.map((p) => p.id === produto.id ? resultado.produto : p));
-      setVendas((atuais) => [...atuais, resultado.venda]);
+      setVendas((atuais) => adicionarSemDuplicar(atuais, resultado.venda));
       setSucessoOperacao("Venda registrada e estoque atualizado.");
     } catch (error) { setErroOperacao(`A venda não foi registrada: ${error.message}`); }
     finally { operacaoEmCurso.current = false; setSaving(false); }
@@ -845,7 +897,7 @@ function TelaBarracaVendas({ barraca, onBack, refreshSignal, online, podeAdicion
     setErroOperacao("");
     try {
       const salvo = await salvarProduto(barraca.id, novo);
-      setProdutos((atuais) => [...atuais, salvo]);
+      setProdutos((atuais) => adicionarSemDuplicar(atuais, salvo));
     } catch (error) { setErroOperacao(`O produto não foi cadastrado: ${error.message}`); }
   }
 
@@ -1011,20 +1063,30 @@ function TelaPainel({ barracas, setBarracas, onBack, refreshSignal }) {
   const [caixaTotal, setCaixaTotal] = useState(0);
   const [barracaTotais, setBarracaTotais] = useState({});
   const [loading, setLoading] = useState(true);
+  const iniciarRequisicao = useUltimaRequisicao();
 
   const carregarRelatorio = useCallback(async () => {
+    const aindaAtual = iniciarRequisicao();
     setLoading(true);
-    const caixa = (await storageGet(K_CAIXA, true)) || [];
-    const totCaixa = caixa.reduce((s, t) => s + t.valor, 0);
-    const totais = {};
-    for (const b of barracas) {
-      const v = (await storageGet(vendasKey(b.id), true)) || [];
-      totais[b.id] = v.reduce((s, x) => s + x.valor, 0);
+    setErro("");
+    try {
+      const [caixa, ...vendas] = await Promise.all([
+        storageGet(K_CAIXA),
+        ...barracas.map((b) => storageGet(vendasKey(b.id))),
+      ]);
+      if (!aindaAtual()) return;
+      const totais = Object.fromEntries(barracas.map((b, indice) => [
+        b.id,
+        (vendas[indice] || []).reduce((s, x) => s + x.valor, 0),
+      ]));
+      setCaixaTotal((caixa || []).reduce((s, t) => s + t.valor, 0));
+      setBarracaTotais(totais);
+    } catch (error) {
+      if (aindaAtual()) setErro(`Não foi possível carregar a conferência: ${error.message}`);
+    } finally {
+      if (aindaAtual()) setLoading(false);
     }
-    setCaixaTotal(totCaixa);
-    setBarracaTotais(totais);
-    setLoading(false);
-  }, [barracas]);
+  }, [barracas, iniciarRequisicao]);
 
   useEffect(() => { carregarRelatorio(); }, [carregarRelatorio, refreshSignal]);
 
@@ -1038,7 +1100,7 @@ function TelaPainel({ barracas, setBarracas, onBack, refreshSignal }) {
     const nova = { id: uid(), nome: n };
     try {
       const salva = await salvarBarracaRegistro(nova);
-      setBarracas((atuais) => [...atuais, salva]);
+      setBarracas((atuais) => adicionarSemDuplicar(atuais, salva));
       setNome("");
     } catch (error) { setErro(`A barraca não foi cadastrada: ${error.message}`); }
   }
@@ -1118,32 +1180,41 @@ function TelaPainel({ barracas, setBarracas, onBack, refreshSignal }) {
 
 /* ---------------- DASHBOARD E ACESSOS ---------------- */
 
-function TelaHistorico({ onBack }) {
+function TelaHistorico({ onBack, onDadosAlterados }) {
   const [historicos, setHistoricos] = useState([]);
   const [nome, setNome] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [processando, setProcessando] = useState(false);
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState("");
+  const iniciarRequisicao = useUltimaRequisicao();
   const carregar = useCallback(async () => {
+    const aindaAtual = iniciarRequisicao();
     setCarregando(true);
-    try { setHistoricos(await listarHistoricos()); }
-    catch (error) { setErro(`Não foi possível carregar o histórico: ${error.message}`); }
-    finally { setCarregando(false); }
-  }, []);
+    try {
+      const dados = await listarHistoricos();
+      if (!aindaAtual()) return;
+      setHistoricos(dados);
+      setErro("");
+    } catch (error) {
+      if (aindaAtual()) setErro(`Não foi possível carregar o histórico: ${error.message}`);
+    } finally {
+      if (aindaAtual()) setCarregando(false);
+    }
+  }, [iniciarRequisicao]);
   useEffect(() => { carregar(); }, [carregar]);
   async function resetar() {
     if (!nome.trim()) { setErro("Dê um nome para identificar este evento no histórico."); return; }
     if (!window.confirm(`Arquivar o estado atual como “${nome.trim()}” e iniciar um evento limpo? Vendas, entradas e produtos atuais serão retirados da operação.`)) return;
     setProcessando(true); setErro(""); setSucesso("");
-    try { await arquivarEResetarEvento(nome); setNome(""); setSucesso("Evento arquivado e operação resetada com segurança."); await carregar(); }
+    try { await arquivarEResetarEvento(nome); setNome(""); setSucesso("Evento arquivado e operação resetada com segurança."); onDadosAlterados(); await carregar(); }
     catch (error) { setErro(`O reset não foi concluído: ${error.message}`); }
     finally { setProcessando(false); }
   }
   async function restaurar(historico) {
     if (!window.confirm(`Restaurar “${historico.nome}”? Os dados que estão na operação agora serão substituídos. Se precisar deles, arquive-os antes.`)) return;
     setProcessando(true); setErro(""); setSucesso("");
-    try { await restaurarEvento(historico); setSucesso(`“${historico.nome}” foi restaurado.`); }
+    try { await restaurarEvento(historico); setSucesso(`“${historico.nome}” foi restaurado.`); onDadosAlterados(); }
     catch (error) { setErro(`Não foi possível restaurar: ${error.message}`); }
     finally { setProcessando(false); }
   }
@@ -1169,6 +1240,12 @@ function TelaHistorico({ onBack }) {
   </div>;
 }
 
+function useUltimaRequisicao() {
+  const versao = useRef(0);
+  useEffect(() => () => { versao.current += 1; }, []);
+  return useCallback(() => iniciarUltimaRequisicao(versao), []);
+}
+
 function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   const [caixa, setCaixa] = useState([]);
   const [vendasBarracas, setVendasBarracas] = useState({});
@@ -1176,25 +1253,41 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   const [entradas, setEntradas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exportando, setExportando] = useState(false);
+  const [erroCarregamento, setErroCarregamento] = useState("");
   const [erroRelatorio, setErroRelatorio] = useState("");
   const [barracaExpandida, setBarracaExpandida] = useState(null);
+  const iniciarRequisicao = useUltimaRequisicao();
 
   const carregar = useCallback(async () => {
+    const aindaAtual = iniciarRequisicao();
     setLoading(true);
-    const caixaData = (await storageGet(K_CAIXA, true)) || [];
-    const entradasData = (await listarEntradas()) || [];
-    const vendas = {};
-    const produtos = {};
-    for (const barraca of barracas) {
-      vendas[barraca.id] = (await storageGet(vendasKey(barraca.id), true)) || [];
-      produtos[barraca.id] = (await storageGet(produtosKey(barraca.id), true)) || [];
+    try {
+      const [caixaData, entradasData, ...dadosBarracas] = await Promise.all([
+        storageGet(K_CAIXA),
+        listarEntradas(),
+        ...barracas.flatMap((barraca) => [
+          storageGet(vendasKey(barraca.id)),
+          storageGet(produtosKey(barraca.id)),
+        ]),
+      ]);
+      if (!aindaAtual()) return;
+      const vendas = {};
+      const produtos = {};
+      barracas.forEach((barraca, indice) => {
+        vendas[barraca.id] = dadosBarracas[indice * 2] || [];
+        produtos[barraca.id] = dadosBarracas[indice * 2 + 1] || [];
+      });
+      setCaixa(caixaData || []);
+      setEntradas(entradasData || []);
+      setVendasBarracas(vendas);
+      setProdutosBarracas(produtos);
+      setErroCarregamento("");
+    } catch (error) {
+      if (aindaAtual()) setErroCarregamento(`Não foi possível atualizar o dashboard: ${error.message}`);
+    } finally {
+      if (aindaAtual()) setLoading(false);
     }
-    setCaixa(caixaData);
-    setEntradas(entradasData);
-    setVendasBarracas(vendas);
-    setProdutosBarracas(produtos);
-    setLoading(false);
-  }, [barracas]);
+  }, [barracas, iniciarRequisicao]);
 
   useEffect(() => { carregar(); }, [carregar, refreshSignal]);
 
@@ -1305,6 +1398,7 @@ function TelaDashboard({ barracas, onBack, onNavigate, refreshSignal }) {
   return (
     <div className="tela">
       <TopBar title="Dashboard" subtitle="Visão geral das vendas" onBack={onBack} icon={<ClipboardList size={20} />} />
+      {erroCarregamento && <div className="err-msg"><AlertCircle size={14} /> {erroCarregamento} <button type="button" className="btn-secondary" onClick={carregar}>Tentar novamente</button></div>}
       <div className="dashboard-actions">
         <div><h2>Resumo do evento</h2><p>Atualize para acompanhar a operação em tempo real.</p></div>
         <div className="dashboard-quick-actions">
@@ -1414,23 +1508,26 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
   const [nomeBarraca, setNomeBarraca] = useState("");
   const [carregando, setCarregando] = useState(Boolean(supabase));
   const [salvando, setSalvando] = useState(false);
+  const iniciarRequisicao = useUltimaRequisicao();
 
   const recarregar = useCallback(async () => {
+    const aindaAtual = iniciarRequisicao();
     if (!supabase) {
-      setUsuarios(listarUsuarios());
+      if (aindaAtual()) setUsuarios(listarUsuarios());
       return;
     }
     setCarregando(true);
     try {
       const resultado = await gerenciarUsuarios("listar");
+      if (!aindaAtual()) return;
       setUsuarios(resultado.usuarios || []);
       setErro("");
     } catch (error) {
-      setErro(error.message);
+      if (aindaAtual()) setErro(error.message);
     } finally {
-      setCarregando(false);
+      if (aindaAtual()) setCarregando(false);
     }
-  }, []);
+  }, [iniciarRequisicao]);
 
   useEffect(() => { recarregar(); }, [recarregar]);
 
@@ -1478,7 +1575,7 @@ function TelaAcessos({ barracas, setBarracas, usuarioAtualId, onBack }) {
     setErro("");
     try {
       const salva = await salvarBarracaRegistro({ id: uid(), nome });
-      setBarracas((atuais) => [...atuais, salva]);
+      setBarracas((atuais) => adicionarSemDuplicar(atuais, salva));
       setNomeBarraca("");
     } catch (error) { setErro(`A barraca não foi cadastrada: ${error.message}`); }
   }
@@ -1596,14 +1693,20 @@ function TelaAcesso({ onLogin }) {
 export default function App() {
   const [screen, setScreen] = useState("home");
   const [barracas, setBarracas] = useState([]);
+  const [carregandoBarracas, setCarregandoBarracas] = useState(true);
+  const [erroBarracas, setErroBarracas] = useState("");
   const [barracaAtiva, setBarracaAtiva] = useState(null);
   const [session, setSession] = useState(null);
   const [perfil, setPerfil] = useState(null);
   const [carregandoAcesso, setCarregandoAcesso] = useState(bancoCentralConfigurado);
   const [erroAcesso, setErroAcesso] = useState("");
+  const [versaoManual, setVersaoManual] = useState(0);
   const online = useConexao();
   const podeOperar = !supabase || online;
   const sincronizacao = useSincronizacao(Boolean(session && perfil));
+  const iniciarRequisicaoBarracas = useUltimaRequisicao();
+  const sinalAtualizacao = `${sincronizacao.versao}:${versaoManual}`;
+  const atualizarDados = useCallback(() => setVersaoManual((atual) => atual + 1), []);
 
   const abrirModuloInicial = (perfilAtual) => {
     if (perfilAtual.papel === "admin") { setScreen("dashboard"); return; }
@@ -1658,11 +1761,37 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (supabase && (!session || !perfil)) {
+      setBarracas([]);
+      setErroBarracas("");
+      setCarregandoBarracas(Boolean(session));
+      return;
+    }
+    const aindaAtual = iniciarRequisicaoBarracas();
+    setCarregandoBarracas(true);
+    setErroBarracas("");
     (async () => {
-      const data = await storageGet(K_BARRACAS, true);
-      setBarracas(data || []);
+      try {
+        const data = await storageGet(K_BARRACAS);
+        if (aindaAtual()) setBarracas(data || []);
+      } catch (error) {
+        if (aindaAtual()) setErroBarracas(`Não foi possível carregar as barracas: ${error.message}`);
+      } finally {
+        if (aindaAtual()) setCarregandoBarracas(false);
+      }
     })();
-  }, [sincronizacao.versao]);
+  }, [iniciarRequisicaoBarracas, perfil, session, sinalAtualizacao]);
+
+  useEffect(() => {
+    if (!barracaAtiva) return;
+    const atual = barracas.find((barraca) => barraca.id === barracaAtiva.id);
+    if (!atual) {
+      setBarracaAtiva(null);
+      if (screen === "barraca_vendas") setScreen("barraca_select");
+    } else if (atual !== barracaAtiva) {
+      setBarracaAtiva(atual);
+    }
+  }, [barracaAtiva, barracas, screen]);
 
   if (carregandoAcesso) {
     return <div className="app-root"><div className="tela"><div className="hist-empty">Carregando acesso…</div></div></div>;
@@ -1706,6 +1835,7 @@ export default function App() {
     <div className="app-root">
       <Navbar screen={screen} onNavigate={setScreen} perfil={perfil} onLogout={sair} />
       <EstadoConexao online={online} sincronizacao={sincronizacao.status} />
+      {erroBarracas && !screen.startsWith("barraca") && <div className="connection-banner connection-warning"><AlertCircle size={15} /> {erroBarracas} <button type="button" className="btn-secondary" onClick={atualizarDados}>Tentar novamente</button></div>}
       <main className="app-main">
       {screen === "home" && (
         <div className="tela">
@@ -1765,15 +1895,19 @@ export default function App() {
         </div>
       )}
 
-      {screen === "caixa" && <TelaCaixa onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} />}
-      {screen === "portaria" && podeAcessarPortaria && <TelaPortaria onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} perfil={perfil} />}
+      {screen === "caixa" && <TelaCaixa onBack={() => setScreen("home")} refreshSignal={sinalAtualizacao} online={podeOperar} />}
+      {screen === "portaria" && podeAcessarPortaria && <TelaPortaria onBack={() => setScreen("home")} refreshSignal={sinalAtualizacao} online={podeOperar} perfil={perfil} />}
 
       {screen === "barraca_select" && (
         perfil?.papel === "barraca" ? (
-          (() => {
+          carregandoBarracas ? (
+            <div className="tela"><TopBar title="Barraca" subtitle="Acesso do operador" onBack={() => setScreen("home")} icon={<Store size={20} />} /><div className="hist-empty">Carregando barraca…</div></div>
+          ) : erroBarracas ? (
+            <div className="tela"><TopBar title="Barraca" subtitle="Acesso do operador" onBack={() => setScreen("home")} icon={<Store size={20} />} /><div className="err-msg"><AlertCircle size={14} /> {erroBarracas} <button type="button" className="btn-secondary" onClick={atualizarDados}>Tentar novamente</button></div></div>
+          ) : (() => {
             const barracaVinculada = barracas.find((b) => b.id === perfil.barraca_id);
             return barracaVinculada ? (
-              <TelaBarracaVendas barraca={barracaVinculada} onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} online={podeOperar} podeAdicionar={podeAdicionarProdutos(perfil)} podeVerTotal={podeVerTotalBarraca(perfil)} />
+              <TelaBarracaVendas barraca={barracaVinculada} onBack={() => setScreen("home")} refreshSignal={sinalAtualizacao} online={podeOperar} podeAdicionar={podeAdicionarProdutos(perfil)} podeVerTotal={podeVerTotalBarraca(perfil)} />
             ) : (
               <div className="tela">
                 <TopBar title="Barraca" subtitle="Acesso do operador" onBack={() => setScreen("home")} icon={<Store size={20} />} />
@@ -1784,6 +1918,9 @@ export default function App() {
         ) : (
           <TelaBarracaSelect
             barracas={barracasPermitidas}
+            carregando={carregandoBarracas}
+            erroCarregamento={erroBarracas}
+            onRetry={atualizarDados}
             onEnter={(b) => { setBarracaAtiva(b); setScreen("barraca_vendas"); }}
             onBack={() => setScreen("home")}
           />
@@ -1791,19 +1928,19 @@ export default function App() {
       )}
 
       {screen === "barraca_vendas" && barracaAtiva && (
-        <TelaBarracaVendas barraca={barracaAtiva} onBack={() => setScreen("barraca_select")} refreshSignal={sincronizacao.versao} online={podeOperar} podeAdicionar={podeAdicionarProdutos(perfil)} podeVerTotal={podeVerTotalBarraca(perfil)} />
+        <TelaBarracaVendas barraca={barracaAtiva} onBack={() => setScreen("barraca_select")} refreshSignal={sinalAtualizacao} online={podeOperar} podeAdicionar={podeAdicionarProdutos(perfil)} podeVerTotal={podeVerTotalBarraca(perfil)} />
       )}
 
       {screen === "painel" && (
-        <TelaPainel barracas={barracas} setBarracas={setBarracas} onBack={() => setScreen("home")} refreshSignal={sincronizacao.versao} />
+        <TelaPainel barracas={barracas} setBarracas={setBarracas} onBack={() => setScreen("home")} refreshSignal={sinalAtualizacao} />
       )}
       {screen === "dashboard" && podeAcessarPainel && (
-        <TelaDashboard barracas={barracas} onBack={() => setScreen("home")} onNavigate={setScreen} refreshSignal={sincronizacao.versao} />
+        <TelaDashboard barracas={barracas} onBack={() => setScreen("home")} onNavigate={setScreen} refreshSignal={sinalAtualizacao} />
       )}
       {screen === "acessos" && podeAcessarPainel && (
         <TelaAcessos barracas={barracas} setBarracas={setBarracas} usuarioAtualId={perfil?.id} onBack={() => setScreen("home")} />
       )}
-      {screen === "historico" && podeAcessarPainel && <TelaHistorico onBack={() => setScreen("home")} />}
+      {screen === "historico" && podeAcessarPainel && <TelaHistorico onBack={() => setScreen("home")} onDadosAlterados={atualizarDados} />}
       </main>
       <SiteFooter />
       <MobileNav screen={screen} onNavigate={setScreen} perfil={perfil} />
